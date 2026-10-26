@@ -75,36 +75,34 @@
   // ============ 数据管理按钮事件 ============
 
   function bindDataManagement() {
-    const exportBtn = document.getElementById('export-btn');
+    const dropdownToggle = document.getElementById('export-dropdown');
+    const exportMenu = document.getElementById('export-menu');
     const importFile = document.getElementById('import-file');
     const clearBtn = document.getElementById('clear-btn');
 
-    // 导出
-    if (exportBtn) {
-      exportBtn.addEventListener('click', () => {
-        try {
-          const json = global.dataStore.exportJSON();
-          const blob = new Blob([json], { type: 'application/json' });
-          const now = new Date();
-          const fname = `expense-backup-${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}.json`;
-          const url = URL.createObjectURL(blob);
-
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = fname;
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-          URL.revokeObjectURL(url);
-
-          console.log('[main] Exported:', fname);
-        } catch (e) {
-          alert('导出失败：' + e.message);
-        }
+    // === 导出下拉菜单 ===
+    if (dropdownToggle && exportMenu) {
+      // 点击 toggle 开关下拉
+      dropdownToggle.addEventListener('click', (e) => {
+        e.stopPropagation();
+        exportMenu.classList.toggle('show');
+      });
+      // 点击菜单项触发对应导出
+      exportMenu.querySelectorAll('.dropdown-item').forEach((item) => {
+        item.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const fmt = item.dataset.format;
+          exportMenu.classList.remove('show');
+          doExport(fmt);
+        });
+      });
+      // 点击页面其他地方关闭下拉
+      document.addEventListener('click', () => {
+        exportMenu.classList.remove('show');
       });
     }
 
-    // 导入
+    // === 导入：按扩展名分派解析 ===
     if (importFile) {
       importFile.addEventListener('change', async (e) => {
         const file = e.target.files && e.target.files[0];
@@ -116,11 +114,11 @@
         }
 
         try {
-          const text = await file.text();
-          const count = global.dataStore.importJSON(text);
+          const ext = file.name.split('.').pop().toLowerCase();
+          const count = await doImport(file, ext);
           alert(`导入成功！共恢复 ${count} 条记录。`);
           global.renderer.refreshAll();
-          console.log('[main] Imported:', count, 'records');
+          console.log('[main] Imported:', count, 'records (', ext, ')');
         } catch (err) {
           alert('导入失败：' + err.message);
         } finally {
@@ -129,7 +127,7 @@
       });
     }
 
-    // 清空
+    // === 清空 ===
     if (clearBtn) {
       clearBtn.addEventListener('click', () => {
         if (!confirm('⚠️ 确定要清空所有开销数据吗？此操作不可撤销！')) return;
@@ -140,5 +138,85 @@
         console.log('[main] All data cleared');
       });
     }
+  }
+
+  // ============ 多格式导出 ============
+
+  function doExport(format) {
+    const now = new Date();
+    const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+
+    try {
+      if (format === 'json') {
+        const json = global.dataStore.exportJSON();
+        triggerDownload(
+          new Blob([json], { type: 'application/json;charset=utf-8' }),
+          `expense-backup-${dateStr}.json`
+        );
+      } else if (format === 'csv') {
+        const csv = global.dataStore.exportCSV();
+        triggerDownload(
+          new Blob([csv], { type: 'text/csv;charset=utf-8' }),
+          `expense-backup-${dateStr}.csv`
+        );
+      } else if (format === 'excel') {
+        if (!global.XLSX) {
+          alert('Excel 导出需要 SheetJS 库，但当前未加载。请检查网络后刷新页面，或改用 JSON/CSV 格式。');
+          return;
+        }
+        const arrayBuffer = global.dataStore.exportExcel();
+        triggerDownload(
+          new Blob([arrayBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
+          `expense-backup-${dateStr}.xlsx`
+        );
+      } else {
+        alert('未知导出格式：' + format);
+        return;
+      }
+      console.log('[main] Exported format:', format);
+    } catch (e) {
+      alert('导出失败：' + e.message);
+    }
+  }
+
+  // ============ 多格式导入 ============
+
+  async function doImport(file, ext) {
+    const exts = ['json', 'csv', 'xlsx', 'xls'];
+    if (!exts.includes(ext)) {
+      throw new Error(`不支持的文件格式 ".${ext}"，请选择 .json / .csv / .xlsx / .xls`);
+    }
+
+    if (ext === 'json') {
+      const text = await file.text();
+      return global.dataStore.importJSON(text);
+    }
+
+    if (ext === 'csv') {
+      const text = await file.text();
+      return global.dataStore.importCSV(text);
+    }
+
+    if (ext === 'xlsx' || ext === 'xls') {
+      if (!global.XLSX) {
+        throw new Error('Excel 导入需要 SheetJS 库，但当前未加载。请检查网络后刷新页面。');
+      }
+      const arrayBuffer = await file.arrayBuffer();
+      return global.dataStore.importExcel(arrayBuffer);
+    }
+  }
+
+  // ============ 下载辅助 ============
+
+  function triggerDownload(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    // 延迟释放 URL（部分浏览器需要）
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 })(window);

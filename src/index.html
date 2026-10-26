@@ -163,10 +163,17 @@
     <section class="data-section">
       <h2>⚙️ 数据管理</h2>
       <div class="data-actions">
-        <button id="export-btn" class="btn btn-outline">📤 导出备份 (JSON)</button>
+        <div class="dropdown-wrapper">
+          <button id="export-dropdown" class="btn btn-outline dropdown-toggle">📤 导出 ▾</button>
+          <div class="dropdown-menu" id="export-menu">
+            <button type="button" class="dropdown-item" data-format="json">📄 导出为 JSON</button>
+            <button type="button" class="dropdown-item" data-format="csv">📊 导出为 CSV</button>
+            <button type="button" class="dropdown-item" data-format="excel">📑 导出为 Excel</button>
+          </div>
+        </div>
         <label class="btn btn-outline">
           📥 导入备份
-          <input type="file" id="import-file" accept=".json" hidden>
+          <input type="file" id="import-file" accept=".json,.csv,.xlsx,.xls" hidden>
         </label>
         <button id="clear-btn" class="btn btn-danger">🗑️ 清空所有数据</button>
       </div>
@@ -175,6 +182,8 @@
 
   <!-- ECharts CDN -->
   <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+  <!-- SheetJS (xlsx) CDN — Excel 导出导入 -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
   <!-- 业务 JS 模块（严格按依赖顺序加载） -->
   <script src="js/auth.js"></script>            <!-- 认证模块最先（路由守卫 + 登录态检查） -->

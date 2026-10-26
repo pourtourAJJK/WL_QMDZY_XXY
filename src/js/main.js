@@ -7,7 +7,15 @@
   'use strict';
 
   // ============ 路由守卫回调（auth.js 登录成功后调用） ============
+  let _businessModulesInited = false; // 防止 initBusinessModules 被调两次
+
   global.onAuthReady = () => {
+    if (_businessModulesInited) {
+      console.warn('[main] business modules already initialized, skipping');
+      return;
+    }
+    _businessModulesInited = true;
+
     console.log('[main] Auth ready — initializing business modules...');
 
     // 更新 header 显示当前用户名
@@ -24,17 +32,12 @@
     console.log('[main] DOM ready — init auth first...');
 
     // === 0. 先初始化认证模块（决定显示登录页还是仪表盘） ===
+    // auth.init() 内部会根据登录态自动调用 showLogin() 或 showDashboard()
+    // showDashboard() 会触发 global.onAuthReady()（仅一次）
     if (global.auth && typeof global.auth.init === 'function') {
       global.auth.init();
-      // auth.init() 内部会根据登录态自动调用 showLogin() 或 showDashboard()
-      // showDashboard() 会触发 global.onAuthReady()
     } else {
       console.error('[main] auth module not loaded');
-    }
-
-    // 如果已登录，主动初始化（auth.showDashboard 会调用 onAuthReady，但为了保险）
-    if (global.auth && global.auth.isLoggedIn()) {
-      global.onAuthReady();
     }
   });
 

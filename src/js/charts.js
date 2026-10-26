@@ -1,68 +1,125 @@
 /**
- * charts.js — ECharts 图表（修复 + 视觉增强 + 新增堆叠柱状图）
- * Feature: feature/chart-enhancement
- * 改动：
- *   1. init() 加 echarts 存在性检查 + DOM ready 延迟（规避 CDN 竞态）
- *   2. 环形图：加中心总金额文字 + 百分比 label + emphasis 放大动画
- *   3. 柱状图：加渐变色带 + hover 联动高亮（其他变灰）
- *   4. 新增 renderStackByMonth() — 月度类别堆叠柱状图
+ * charts.js — ECharts 图表（修复版）
+ * Feature: feature/fix-chart-render
+ * 根因：setTimeout 延迟 init 时序混乱 + ECharts.init() 时容器可能还在 0×0 尺寸
+ * 修复：
+ *   1. init() 用 requestAnimationFrame 同步 init（DOM ready + echarts CDN 已加载）
+ *   2. init 后手动 resize 一次（确保 display:none → block 后的尺寸正确）
+ *   3. refreshAll 里 setOption 后加 inst.resize() 双保险
+ *   4. echarts 未加载时给降级提示 HTML
+ *   5. refreshAll 加最大重试次数（避免无限循环）
  */
 (function (global) {
   'use strict';
 
   const charts = {
     instances: {},
+    _retryCount: 0,
+    _MAX_RETRY: 5,
 
-    /**
-     * 初始化 ECharts 实例（DOM ready 后调用）
-     * 修 bug：echarts 存在性检查 + 延迟 init 规避 CDN 异步加载竞态
-     */
+    /** 初始化 ECharts 实例 */
     init() {
-      // 检查 ECharts 是否加载
+      // 1. echarts 是否加载
       if (typeof global.echarts === 'undefined') {
-        console.error('[charts] echarts not loaded! Check CDN connection.');
+        console.error('[charts] ❌ echarts not loaded! Check CDN connection.');
+        // 给所有容器降级提示
+        ['pie-chart', 'bar-chart', 'line-chart', 'stack-chart'].forEach((id) => {
+          showDegraded(id, '📊 图表库加载失败<br>请检查网络后刷新页面');
+        });
         return false;
       }
 
-      // 延迟 50ms init，确保 CDN script tag 执行完毕后 echarts 才可用
-      setTimeout(() => {
-        const pieDom = document.getElementById('pie-chart');
-        const barDom = document.getElementById('bar-chart');
-        const lineDom = document.getElementById('line-chart');
-        const stackDom = document.getElementById('stack-chart');
+      // 2. 用 requestAnimationFrame 等浏览器 layout 完成
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          // 双 rAF 确保 display:none → block 后浏览器已完成 layout
 
-        if (pieDom) this.instances.pie = echarts.init(pieDom);
-        if (barDom) this.instances.bar = echarts.init(barDom);
-        if (lineDom) this.instances.line = echarts.init(lineDom);
-        if (stackDom) this.instances.stack = echarts.init(stackDom);
+          const pieDom = document.getElementById('pie-chart');
+          const barDom = document.getElementById('bar-chart');
+          const lineDom = document.getElementById('line-chart');
+          const stackDom = document.getElementById('stack-chart');
 
-        // 窗口 resize 自适应
-        window.addEventListener('resize', () => {
-          Object.values(this.instances).forEach((inst) => inst && inst.resize());
+          this.instances = {}; // 重置（防止重复 init 留下脏实例）
+
+          try {
+            if (pieDom) {
+              pieDom.innerHTML = '';
+              this.instances.pie = echarts.init(pieDom);
+            }
+            if (barDom) {
+              barDom.innerHTML = '';
+              this.instances.bar = echarts.init(barDom);
+            }
+            if (lineDom) {
+              lineDom.innerHTML = '';
+              this.instances.line = echarts.init(lineDom);
+            }
+            if (stackDom) {
+              stackDom.innerHTML = '';
+              this.instances.stack = echarts.init(stackDom);
+            }
+
+            // 3. 手动 resize 一次（确保容器尺寸正确）
+            setTimeout(() => {
+              Object.values(this.instances).forEach((inst) => {
+                try { inst.resize(); } catch (e) {}
+              });
+            }, 10);
+
+            // 4. 窗口 resize 自适应
+            window.addEventListener('resize', () => {
+              Object.values(this.instances).forEach((inst) => {
+                try { inst.resize(); } catch (e) {}
+              });
+            });
+
+            console.log('[charts] ✅ initialized. instances:', Object.keys(this.instances).join(', '));
+
+            // 5. init 完了立即触发一次 refreshAll（如果已经有数据的话）
+            if (this._pendingFilter !== undefined) {
+              console.log('[charts] auto-refreshing after init...');
+              this.refreshAll(this._pendingFilter);
+              this._pendingFilter = undefined;
+            }
+          } catch (e) {
+            console.error('[charts] ❌ echarts.init failed:', e);
+          }
         });
-
-        console.log('[charts] initialized ✅ instances:', Object.keys(this.instances).length);
-      }, 50);
+      });
 
       return true;
     },
 
     /** 统一刷新所有图表 */
     refreshAll(filterCategory) {
-      // 确保实例已初始化
-      if (!this.instances.pie && !this.instances.bar && !this.instances.line) {
-        console.warn('[charts] instances not ready, delaying refreshAll');
-        setTimeout(() => this.refreshAll(filterCategory), 100);
+      const instancesReady = this.instances.pie && this.instances.bar && this.instances.line;
+
+      if (!instancesReady) {
+        if (this._retryCount < this._MAX_RETRY) {
+          this._retryCount++;
+          console.warn(`[charts] instances not ready (retry ${this._retryCount}/${this._MAX_RETRY}), delaying refreshAll`);
+          this._pendingFilter = filterCategory;
+          setTimeout(() => this.refreshAll(filterCategory), 100);
+        } else {
+          console.error('[charts] ❌ max retries exceeded — ECharts instances never initialized');
+          ['pie-chart', 'bar-chart', 'line-chart', 'stack-chart'].forEach((id) => {
+            showDegraded(id, '📊 图表初始化超时<br>请刷新页面重试');
+          });
+        }
         return;
       }
+
+      this._retryCount = 0;
+
       this.renderCategoryPie(filterCategory);
       this.renderMonthBar(filterCategory);
       this.renderTrendLine(filterCategory);
       this.renderStackByMonth(filterCategory);
+
+      console.log('[charts] 🎨 all charts refreshed');
     },
 
-    // ========== 1. 增强版环形图：类别占比 ==========
-    // 改动：加中心总金额 + 百分比 label + emphasis 动画
+    // ========== 1. 环形图 ==========
     renderCategoryPie(filterCategory) {
       const inst = this.instances.pie;
       if (!inst) return;
@@ -83,108 +140,49 @@
 
       const data = Object.entries(byCategory)
         .map(([name, value]) => ({
-          name,
-          value: +value.toFixed(2),
+          name, value: +value.toFixed(2),
           itemStyle: { color: global.Categories.getColorByName(name) },
         }))
-        .sort((a, b) => b.value - a.value); // 按金额排序，视觉更清晰
+        .sort((a, b) => b.value - a.value);
 
-      inst.setOption(
-        {
-          tooltip: {
-            trigger: 'item',
-            backgroundColor: 'rgba(45, 55, 72, 0.95)',
-            borderColor: 'transparent',
-            textStyle: { color: '#fff', fontSize: 13 },
-            formatter: (p) =>
-              `<strong>${p.name}</strong><br/>¥${p.value.toFixed(2)}<br/><span style="color:#a0aec0">${p.percent}%</span>`,
-          },
-          legend: {
-            orient: 'vertical',
-            right: 10,
-            top: 'center',
-            textStyle: { fontSize: 12, color: '#4a5568' },
-            itemWidth: 12,
-            itemHeight: 12,
-            itemGap: 14,
-          },
-          graphic: [
-            // 中心总金额数字
-            {
-              type: 'text',
-              left: '40%',
-              top: '42%',
-              style: {
-                text: `¥${total.toFixed(0)}`,
-                fontSize: 24,
-                fontWeight: 'bold',
-                fill: '#2d3748',
-                textAlign: 'center',
-              },
-            },
-            {
-              type: 'text',
-              left: '40%',
-              top: '55%',
-              style: {
-                text: filterCategory ? '筛选后总支出' : '累计总支出',
-                fontSize: 12,
-                fill: '#718096',
-                textAlign: 'center',
-              },
-            },
-          ],
-          series: [
-            {
-              type: 'pie',
-              radius: ['40%', '68%'],
-              center: ['40%', '50%'],
-              avoidLabelOverlap: true,
-              padAngle: 1.5, // 扇区间留缝
-              itemStyle: {
-                borderRadius: 8,
-                borderColor: '#fff',
-                borderWidth: 3,
-              },
-              label: {
-                show: true,
-                position: 'outside',
-                fontSize: 11,
-                color: '#4a5568',
-                formatter: (p) => `${p.name}\n${p.percent}%`,
-              },
-              labelLine: {
-                show: true,
-                length: 10,
-                length2: 8,
-              },
-              emphasis: {
-                scale: true,
-                scaleSize: 10,
-                itemStyle: {
-                  shadowBlur: 20,
-                  shadowOffsetX: 0,
-                  shadowColor: 'rgba(0, 0, 0, 0.2)',
-                },
-                label: {
-                  show: true,
-                  fontSize: 14,
-                  fontWeight: 'bold',
-                },
-              },
-              animationType: 'scale',
-              animationEasing: 'elasticOut',
-              animationDelay: (idx) => idx * 80,
-              data,
-            },
-          ],
+      inst.setOption({
+        tooltip: {
+          trigger: 'item',
+          backgroundColor: 'rgba(45, 55, 72, 0.95)',
+          borderColor: 'transparent',
+          textStyle: { color: '#fff', fontSize: 13 },
+          formatter: (p) => `<strong>${p.name}</strong><br/>¥${p.value.toFixed(2)}<br/><span style="color:#a0aec0">${p.percent}%</span>`,
         },
-        true
-      );
+        legend: {
+          orient: 'vertical', right: 10, top: 'center',
+          textStyle: { fontSize: 12, color: '#4a5568' },
+          itemWidth: 12, itemHeight: 12, itemGap: 14,
+        },
+        graphic: [
+          { type: 'text', left: '40%', top: '42%',
+            style: { text: `¥${total.toFixed(0)}`, fontSize: 24, fontWeight: 'bold', fill: '#2d3748', textAlign: 'center' } },
+          { type: 'text', left: '40%', top: '55%',
+            style: { text: filterCategory ? '筛选后总支出' : '累计总支出', fontSize: 12, fill: '#718096', textAlign: 'center' } },
+        ],
+        series: [{
+          type: 'pie', radius: ['40%', '68%'], center: ['40%', '50%'],
+          padAngle: 1.5,
+          itemStyle: { borderRadius: 8, borderColor: '#fff', borderWidth: 3 },
+          label: { show: true, position: 'outside', fontSize: 11, color: '#4a5568',
+            formatter: (p) => `${p.name}\n${p.percent}%` },
+          labelLine: { show: true, length: 10, length2: 8 },
+          emphasis: { scale: true, scaleSize: 10,
+            itemStyle: { shadowBlur: 20, shadowColor: 'rgba(0,0,0,0.2)' },
+            label: { show: true, fontSize: 14, fontWeight: 'bold' } },
+          animationType: 'scale', animationEasing: 'elasticOut', animationDelay: (idx) => idx * 80,
+          data,
+        }],
+      }, true);
+
+      inst.resize();
     },
 
-    // ========== 2. 增强版柱状图：月度支出 ==========
-    // 改动：渐变色带 + hover 联动高亮
+    // ========== 2. 柱状图 ==========
     renderMonthBar(filterCategory) {
       const inst = this.instances.bar;
       if (!inst) return;
@@ -205,85 +203,40 @@
       }
       hideEmptyState('bar-chart');
 
-      // 最大柱子用于 label 位置计算
-      const maxVal = Math.max(...values);
-
-      inst.setOption(
-        {
-          tooltip: {
-            trigger: 'axis',
-            backgroundColor: 'rgba(45, 55, 72, 0.95)',
-            borderColor: 'transparent',
-            textStyle: { color: '#fff', fontSize: 13 },
-            formatter: (p) => {
-              const item = p[0];
-              return `<strong>${item.axisValue}</strong><br/>支出：<span style="color:#68d391">¥${item.value}</span>`;
-            },
-            axisPointer: {
-              type: 'shadow',
-              shadowStyle: { color: 'rgba(102, 126, 234, 0.08)' },
-            },
-          },
-          grid: { top: 30, bottom: 40, left: 60, right: 30 },
-          xAxis: {
-            type: 'category',
-            data: months.map((m) => m.slice(5) + '月'),
-            axisLabel: { fontSize: 12, color: '#4a5568' },
-            axisLine: { lineStyle: { color: '#e2e8f0' } },
-            axisTick: { show: false },
-          },
-          yAxis: {
-            type: 'value',
-            axisLabel: {
-              formatter: (v) => '¥' + v,
-              fontSize: 11,
-              color: '#718096',
-            },
-            splitLine: { lineStyle: { color: '#edf2f7', type: 'dashed' } },
-          },
-          series: [
-            {
-              type: 'bar',
-              data: values,
-              barWidth: '45%',
-              itemStyle: {
-                borderRadius: [6, 6, 0, 0],
-                color: {
-                  type: 'linear',
-                  x: 0, y: 0, x2: 0, y2: 1,
-                  colorStops: [
-                    { offset: 0, color: '#667eea' },
-                    { offset: 0.5, color: '#8b7cf6' },
-                    { offset: 1, color: '#764ba2' },
-                  ],
-                },
-              },
-              label: {
-                show: true,
-                position: 'top',
-                formatter: (p) => '¥' + p.value,
-                fontSize: 12,
-                fontWeight: 'bold',
-                color: '#4a5568',
-              },
-              emphasis: {
-                focus: 'series',
-                itemStyle: {
-                  shadowBlur: 15,
-                  shadowOffsetX: 0,
-                  shadowColor: 'rgba(102, 126, 234, 0.5)',
-                },
-              },
-              animationDuration: 800,
-              animationEasing: 'cubicOut',
-            },
-          ],
+      inst.setOption({
+        tooltip: {
+          trigger: 'axis',
+          backgroundColor: 'rgba(45, 55, 72, 0.95)', borderColor: 'transparent',
+          textStyle: { color: '#fff', fontSize: 13 },
+          formatter: (p) => `<strong>${p[0].axisValue}</strong><br/>支出：<span style="color:#68d391">¥${p[0].value}</span>`,
+          axisPointer: { type: 'shadow', shadowStyle: { color: 'rgba(102, 126, 234, 0.08)' } },
         },
-        true
-      );
+        grid: { top: 30, bottom: 40, left: 60, right: 30 },
+        xAxis: { type: 'category', data: months.map((m) => m.slice(5) + '月'),
+          axisLabel: { fontSize: 12, color: '#4a5568' }, axisLine: { lineStyle: { color: '#e2e8f0' } }, axisTick: { show: false } },
+        yAxis: { type: 'value',
+          axisLabel: { formatter: (v) => '¥' + v, fontSize: 11, color: '#718096' },
+          splitLine: { lineStyle: { color: '#edf2f7', type: 'dashed' } } },
+        series: [{
+          type: 'bar', data: values, barWidth: '45%',
+          itemStyle: { borderRadius: [6, 6, 0, 0],
+            color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
+              colorStops: [
+                { offset: 0, color: '#667eea' },
+                { offset: 0.5, color: '#8b7cf6' },
+                { offset: 1, color: '#764ba2' } ] } },
+          label: { show: true, position: 'top', formatter: (p) => '¥' + p.value,
+            fontSize: 12, fontWeight: 'bold', color: '#4a5568' },
+          emphasis: { focus: 'series',
+            itemStyle: { shadowBlur: 15, shadowColor: 'rgba(102, 126, 234, 0.5)' } },
+          animationDuration: 800, animationEasing: 'cubicOut',
+        }],
+      }, true);
+
+      inst.resize();
     },
 
-    // ========== 3. 折线图：本月每日趋势（保持不变，微调） ==========
+    // ========== 3. 折线图 ==========
     renderTrendLine(filterCategory) {
       const inst = this.instances.line;
       if (!inst) return;
@@ -291,22 +244,15 @@
       const expenses = getFilteredExpenses(filterCategory);
       const now = new Date();
       const thisMonthPrefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-
       const monthly = expenses.filter((e) => e.date.startsWith(thisMonthPrefix));
-
       const byDate = {};
-      monthly.forEach((e) => {
-        byDate[e.date] = (byDate[e.date] || 0) + e.amount;
-      });
+      monthly.forEach((e) => { byDate[e.date] = (byDate[e.date] || 0) + e.amount; });
 
       const today = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
       const days = [];
       for (let d = 1; d <= today; d++) {
         const ds = `${thisMonthPrefix}-${String(d).padStart(2, '0')}`;
-        days.push({
-          label: `${d}日`,
-          value: byDate[ds] ? +byDate[ds].toFixed(2) : 0,
-        });
+        days.push({ label: `${d}日`, value: byDate[ds] ? +byDate[ds].toFixed(2) : 0 });
       }
 
       if (monthly.length === 0) {
@@ -315,77 +261,41 @@
       }
       hideEmptyState('line-chart');
 
-      inst.setOption(
-        {
-          tooltip: {
-            trigger: 'axis',
-            backgroundColor: 'rgba(45, 55, 72, 0.95)',
-            borderColor: 'transparent',
-            textStyle: { color: '#fff', fontSize: 13 },
-            formatter: (p) => {
-              const item = p[0];
-              const dateLabel = `${thisMonthPrefix}-${item.axisValue.replace('日', '').padStart(2, '0')}`;
-              return `<strong>${dateLabel}</strong><br/>支出：<span style="color:#68d391">¥${item.value}</span>`;
-            },
-          },
-          grid: { top: 20, bottom: 40, left: 60, right: 30 },
-          xAxis: {
-            type: 'category',
-            data: days.map((d) => d.label),
-            boundaryGap: false,
-            axisLabel: { fontSize: 11, color: '#4a5568' },
-            axisLine: { lineStyle: { color: '#e2e8f0' } },
-            axisTick: { show: false },
-          },
-          yAxis: {
-            type: 'value',
-            axisLabel: { formatter: (v) => '¥' + v, fontSize: 11, color: '#718096' },
-            splitLine: { lineStyle: { color: '#edf2f7', type: 'dashed' } },
-          },
-          series: [
-            {
-              type: 'line',
-              data: days.map((d) => d.value),
-              smooth: true,
-              symbol: 'circle',
-              symbolSize: 8,
-              itemStyle: { color: '#667eea', borderWidth: 2, borderColor: '#fff' },
-              lineStyle: { width: 3, color: '#667eea' },
-              areaStyle: {
-                color: {
-                  type: 'linear',
-                  x: 0, y: 0, x2: 0, y2: 1,
-                  colorStops: [
-                    { offset: 0, color: 'rgba(102, 126, 234, 0.4)' },
-                    { offset: 1, color: 'rgba(102, 126, 234, 0.02)' },
-                  ],
-                },
-              },
-              markPoint: {
-                data: [
-                  { type: 'max', name: '最高' },
-                  { type: 'min', name: '最低' },
-                ],
-              },
-            },
-          ],
-        },
-        true
-      );
+      inst.setOption({
+        tooltip: { trigger: 'axis',
+          backgroundColor: 'rgba(45, 55, 72, 0.95)', borderColor: 'transparent',
+          textStyle: { color: '#fff', fontSize: 13 },
+          formatter: (p) => `<strong>${thisMonthPrefix}-${p[0].axisValue.replace('日', '').padStart(2, '0')}</strong><br/>支出：<span style="color:#68d391">¥${p[0].value}</span>` },
+        grid: { top: 20, bottom: 40, left: 60, right: 30 },
+        xAxis: { type: 'category', data: days.map((d) => d.label), boundaryGap: false,
+          axisLabel: { fontSize: 11, color: '#4a5568' }, axisLine: { lineStyle: { color: '#e2e8f0' } }, axisTick: { show: false } },
+        yAxis: { type: 'value',
+          axisLabel: { formatter: (v) => '¥' + v, fontSize: 11, color: '#718096' },
+          splitLine: { lineStyle: { color: '#edf2f7', type: 'dashed' } } },
+        series: [{
+          type: 'line', data: days.map((d) => d.value),
+          smooth: true, symbol: 'circle', symbolSize: 8,
+          itemStyle: { color: '#667eea', borderWidth: 2, borderColor: '#fff' },
+          lineStyle: { width: 3, color: '#667eea' },
+          areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
+            colorStops: [
+              { offset: 0, color: 'rgba(102, 126, 234, 0.4)' },
+              { offset: 1, color: 'rgba(102, 126, 234, 0.02)' }] } },
+          markPoint: { data: [{ type: 'max', name: '最高' }, { type: 'min', name: '最低' }] },
+        }],
+      }, true);
+
+      inst.resize();
     },
 
-    // ========== 4. 新增：月度类别堆叠柱状图 ==========
-    // 每个月各颜色段 = 各类别支出，一眼看清每月各类别分布
+    // ========== 4. 堆叠柱状图 ==========
     renderStackByMonth(filterCategory) {
       const inst = this.instances.stack;
       if (!inst) return;
 
       const expenses = getFilteredExpenses(filterCategory);
-
-      // 按 月份×类别 二维聚合
-      const byMonth = {}; // { '2026-10': { '餐饮': 100, '交通': 50 }, ... }
+      const byMonth = {};
       const categorySet = new Set();
-
       expenses.forEach((e) => {
         const m = e.date.slice(0, 7);
         categorySet.add(e.category);
@@ -397,79 +307,46 @@
       const categories = Array.from(categorySet);
 
       if (months.length === 0 || categories.length === 0) {
-        showEmptyState('stack-chart', '📊 暂无数据，每月各类别分布将在此展示');
+        showEmptyState('stack-chart', '📊 暂无数据<br>每月各类别分布将在此展示');
         return;
       }
       hideEmptyState('stack-chart');
 
-      // 构造 ECharts series（每个类别一个 series，stacked）
       const series = categories.map((cat) => ({
-        name: cat,
-        type: 'bar',
-        stack: 'expenses',
+        name: cat, type: 'bar', stack: 'expenses', barWidth: '55%',
         emphasis: { focus: 'series' },
-        itemStyle: {
-          borderRadius: [0, 0, 0, 0], // 堆叠时圆角由第一个/最后一个处理
-          color: global.Categories.getColorByName(cat),
-        },
-        barWidth: '55%',
+        itemStyle: { color: global.Categories.getColorByName(cat) },
         data: months.map((m) => +(byMonth[m][cat] || 0).toFixed(2)),
       }));
 
-      // 给每个 series 的第一个/最后一个数据点加圆角（视觉更好）
-      // 简化：直接整体圆角由 ECharts 自动处理
+      inst.setOption({
+        tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' },
+          backgroundColor: 'rgba(45, 55, 72, 0.95)', borderColor: 'transparent',
+          textStyle: { color: '#fff', fontSize: 13 },
+          formatter: (params) => {
+            const monthLabel = params[0].axisValue;
+            const total = params.reduce((s, p) => s + (p.value || 0), 0).toFixed(2);
+            let html = `<strong>${monthLabel}</strong><br/>`;
+            params.forEach((p) => {
+              if (p.value > 0) {
+                html += `<span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${p.color};margin-right:6px;"></span>${p.seriesName}：¥${p.value}<br/>`;
+              }
+            });
+            html += `<span style="border-top:1px solid rgba(255,255,255,0.2);padding-top:4px;margin-top:4px;display:block;"><strong>总计：¥${total}</strong></span>`;
+            return html;
+          } },
+        legend: { data: categories, top: 5,
+          textStyle: { fontSize: 12, color: '#4a5568' }, itemWidth: 12, itemHeight: 12 },
+        grid: { top: 50, bottom: 40, left: 60, right: 30 },
+        xAxis: { type: 'category', data: months.map((m) => m.slice(5) + '月'),
+          axisLabel: { fontSize: 12, color: '#4a5568' }, axisLine: { lineStyle: { color: '#e2e8f0' } }, axisTick: { show: false } },
+        yAxis: { type: 'value',
+          axisLabel: { formatter: (v) => '¥' + v, fontSize: 11, color: '#718096' },
+          splitLine: { lineStyle: { color: '#edf2f7', type: 'dashed' } } },
+        series,
+      }, true);
 
-      inst.setOption(
-        {
-          tooltip: {
-            trigger: 'axis',
-            axisPointer: { type: 'shadow' },
-            backgroundColor: 'rgba(45, 55, 72, 0.95)',
-            borderColor: 'transparent',
-            textStyle: { color: '#fff', fontSize: 13 },
-            formatter: (params) => {
-              const monthLabel = params[0].axisValue;
-              const total = params.reduce((s, p) => s + p.value, 0).toFixed(2);
-              let html = `<strong>${monthLabel}月</strong><br/>`;
-              params.forEach((p) => {
-                if (p.value > 0) {
-                  html += `<span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${p.color};margin-right:6px;"></span>${p.seriesName}：¥${p.value}<br/>`;
-                }
-              });
-              html += `<span style="border-top:1px solid rgba(255,255,255,0.2);padding-top:4px;margin-top:4px;display:block;"><strong>总计：¥${total}</strong></span>`;
-              return html;
-            },
-          },
-          legend: {
-            data: categories,
-            top: 5,
-            textStyle: { fontSize: 12, color: '#4a5568' },
-            itemWidth: 12,
-            itemHeight: 12,
-          },
-          grid: { top: 50, bottom: 40, left: 60, right: 30 },
-          xAxis: {
-            type: 'category',
-            data: months.map((m) => m.slice(5) + '月'),
-            axisLabel: { fontSize: 12, color: '#4a5568' },
-            axisLine: { lineStyle: { color: '#e2e8f0' } },
-            axisTick: { show: false },
-          },
-          yAxis: {
-            type: 'value',
-            axisLabel: {
-              formatter: (v) => '¥' + v,
-              fontSize: 11,
-              color: '#718096',
-            },
-            splitLine: { lineStyle: { color: '#edf2f7', type: 'dashed' } },
-          },
-          series,
-          animationDuration: 800,
-          animationEasing: 'cubicOut',
-        },
-        true
-      );
+      inst.resize();
     },
   };
 
@@ -486,12 +363,16 @@
   function showEmptyState(containerId, html) {
     const dom = document.getElementById(containerId);
     if (!dom) return;
-    // 用空容器占位，不覆盖 ECharts setOption（如果 setOption 成功会覆盖 innerHTML）
     dom.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#a0aec0;font-size:13px;text-align:center;flex-direction:column;gap:8px;">${html}</div>`;
   }
 
-  function hideEmptyState(containerId) {
-    // ECharts setOption 会自动覆盖 DOM
+  function hideEmptyState(containerId) { /* ECharts setOption 会覆盖 DOM */ }
+
+  function showDegraded(containerId, html) {
+    const dom = document.getElementById(containerId);
+    if (dom) {
+      dom.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#e53e3e;font-size:13px;text-align:center;">${html}</div>`;
+    }
   }
 
   global.charts = charts;

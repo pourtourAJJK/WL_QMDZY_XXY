@@ -1,13 +1,46 @@
 /**
- * main.js — 应用入口，DOM ready 后串联全部模块
- * Epic 5: Story 5.1 (数据管理按钮), Story 5.2 (入口整合)
+ * main.js — 应用入口
+ * Feature: feature/auth-login（新增 auth 路由守卫）
+ * 登录流程：auth.init() → 未登录显示登录页 → 登录成功触发 onAuthReady → 初始化业务模块
  */
 (function (global) {
   'use strict';
 
-  document.addEventListener('DOMContentLoaded', () => {
-    console.log('[main] DOM ready — initializing app...');
+  // ============ 路由守卫回调（auth.js 登录成功后调用） ============
+  global.onAuthReady = () => {
+    console.log('[main] Auth ready — initializing business modules...');
 
+    // 更新 header 显示当前用户名
+    const userEl = document.getElementById('current-user');
+    if (userEl) {
+      const name = global.auth.getCurrentUser() || '游客';
+      userEl.textContent = '👤 ' + name;
+    }
+
+    initBusinessModules();
+  };
+
+  document.addEventListener('DOMContentLoaded', () => {
+    console.log('[main] DOM ready — init auth first...');
+
+    // === 0. 先初始化认证模块（决定显示登录页还是仪表盘） ===
+    if (global.auth && typeof global.auth.init === 'function') {
+      global.auth.init();
+      // auth.init() 内部会根据登录态自动调用 showLogin() 或 showDashboard()
+      // showDashboard() 会触发 global.onAuthReady()
+    } else {
+      console.error('[main] auth module not loaded');
+    }
+
+    // 如果已登录，主动初始化（auth.showDashboard 会调用 onAuthReady，但为了保险）
+    if (global.auth && global.auth.isLoggedIn()) {
+      global.onAuthReady();
+    }
+  });
+
+  // ============ 业务模块初始化（登录后才执行） ============
+
+  function initBusinessModules() {
     // === 1. 初始化 ECharts 实例 ===
     if (global.charts && typeof global.charts.init === 'function') {
       try {
@@ -24,7 +57,7 @@
       console.log('[main] form initialized');
     }
 
-    // === 3. 初始化列表视图（绑定筛选下拉框 + 填充类别列表） ===
+    // === 3. 初始化列表视图 ===
     if (global.listView && typeof global.listView.init === 'function') {
       global.listView.init();
       console.log('[main] listView initialized');
@@ -37,9 +70,9 @@
     global.renderer.refreshAll();
 
     console.log('[main] App ready ✅');
-  });
+  }
 
-  // ========== 数据管理按钮事件 ==========
+  // ============ 数据管理按钮事件 ============
 
   function bindDataManagement() {
     const exportBtn = document.getElementById('export-btn');
@@ -91,7 +124,7 @@
         } catch (err) {
           alert('导入失败：' + err.message);
         } finally {
-          e.target.value = ''; // 重置，允许选同一个文件再次导入
+          e.target.value = '';
         }
       });
     }

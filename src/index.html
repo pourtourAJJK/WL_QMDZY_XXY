@@ -7,10 +7,76 @@
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-  <div class="container">
+  <!-- ============== 登录/注册视图 ============== -->
+  <div id="login-view" class="login-view">
+    <div class="login-card">
+      <div class="login-header">
+        <h1>🔐 个人开销仪表盘</h1>
+        <p class="login-subtitle">请登录您的账户</p>
+      </div>
+
+      <!-- Tab 切换 -->
+      <div class="auth-tabs">
+        <button class="auth-tab active" id="login-tab" type="button">登录</button>
+        <button class="auth-tab" id="register-tab" type="button">注册</button>
+      </div>
+
+      <!-- 登录表单 -->
+      <form id="login-form" class="auth-form">
+        <div class="auth-field">
+          <label for="login-username">账号</label>
+          <input type="text" id="login-username" placeholder="请输入账号（3 位以上）" autocomplete="username" required>
+        </div>
+        <div class="auth-field">
+          <label for="login-password">密码</label>
+          <input type="password" id="login-password" placeholder="请输入密码" autocomplete="current-password" required>
+        </div>
+        <div class="auth-message" id="login-message"></div>
+        <div id="login-lock-info" class="auth-lock-info" style="display: none;"></div>
+        <button type="submit" class="btn btn-primary auth-submit">登 录</button>
+        <div class="auth-footer">
+          <span>还没有账户？</span>
+          <button type="button" id="switch-to-register" class="auth-switch">去注册 →</button>
+        </div>
+      </form>
+
+      <!-- 注册表单 -->
+      <form id="register-form" class="auth-form" style="display: none;">
+        <div class="auth-field">
+          <label for="register-username">账号</label>
+          <input type="text" id="register-username" placeholder="3 位以上" autocomplete="username" required>
+        </div>
+        <div class="auth-field">
+          <label for="register-password">密码</label>
+          <input type="password" id="register-password" placeholder="至少 6 位" autocomplete="new-password" required>
+        </div>
+        <div class="auth-field">
+          <label for="register-confirm">确认密码</label>
+          <input type="password" id="register-confirm" placeholder="再次输入密码" autocomplete="new-password" required>
+        </div>
+        <div class="auth-message" id="register-message"></div>
+        <button type="submit" class="btn btn-primary auth-submit">注 册</button>
+        <div class="auth-footer">
+          <span>已有账户？</span>
+          <button type="button" id="switch-to-login" class="auth-switch">← 去登录</button>
+        </div>
+      </form>
+
+      <p class="auth-hint">⚠️ 提示：连续输错 5 次密码，账号将被锁定 5 分钟</p>
+    </div>
+  </div>
+
+  <!-- ============== 主仪表盘视图（登录后显示） ============== -->
+  <div id="dashboard-container" class="container" style="display: none;">
     <header class="app-header">
-      <h1>💰 个人开销统计仪表盘</h1>
-      <p class="subtitle">本地存储 · 零注册 · 打开即用</p>
+      <div class="header-left">
+        <h1>💰 个人开销统计仪表盘</h1>
+        <p class="subtitle">本地存储 · 私密数据 · 登录后查看</p>
+      </div>
+      <div class="header-right">
+        <span class="user-info" id="current-user">👤 游客</span>
+        <button id="logout-btn" class="btn btn-outline btn-logout">🚪 登出</button>
+      </div>
     </header>
 
     <!-- 录入表单 -->
@@ -110,7 +176,8 @@
   <!-- ECharts CDN -->
   <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
 
-  <!-- 业务 JS 模块（按依赖顺序加载） -->
+  <!-- 业务 JS 模块（严格按依赖顺序加载） -->
+  <script src="js/auth.js"></script>            <!-- 认证模块最先（路由守卫 + 登录态检查） -->
   <script src="js/categories.js"></script>
   <script src="js/data-store.js"></script>
   <script src="js/charts.js"></script>
@@ -118,6 +185,6 @@
   <script src="js/list-view.js"></script>
   <script src="js/form.js"></script>
   <script src="js/renderer.js"></script>
-  <script src="js/main.js"></script>
+  <script src="js/main.js"></script>            <!-- main.js 最后，auth.js 暴露 onAuthReady -->
 </body>
 </html>

@@ -42,37 +42,42 @@
   });
 
   // ============ 业务模块初始化（登录后才执行） ============
+  // 改为 async，因为 charts.init() 返回 Promise 需要 await
 
-  function initBusinessModules() {
-    // === 1. 初始化 ECharts 实例 ===
-    if (global.charts && typeof global.charts.init === 'function') {
-      try {
-        global.charts.init();
-        console.log('[main] ECharts instances created');
-      } catch (e) {
-        console.error('[main] charts.init failed:', e);
+  async function initBusinessModules() {
+    try {
+      // === 1. 初始化 ECharts 实例 + await 彻底消除时序竞态 ===
+      if (global.charts && typeof global.charts.init === 'function') {
+        try {
+          await global.charts.init();  // ✅ 等 Promise resolve 后 instances 一定就绪
+          console.log('[main] ECharts instances created ✅');
+        } catch (e) {
+          console.error('[main] charts.init failed:', e);
+        }
       }
+
+      // === 2. 初始化录入表单 ===
+      if (global.form && typeof global.form.init === 'function') {
+        global.form.init();
+        console.log('[main] form initialized');
+      }
+
+      // === 3. 初始化列表视图 ===
+      if (global.listView && typeof global.listView.init === 'function') {
+        global.listView.init();
+        console.log('[main] listView initialized');
+      }
+
+      // === 4. 绑定数据管理按钮 ===
+      bindDataManagement();
+
+      // === 5. 首次全量刷新（此时 charts.instances 一定已就绪） ===
+      global.renderer.refreshAll();
+
+      console.log('[main] App ready ✅');
+    } catch (err) {
+      console.error('[main] initBusinessModules failed:', err);
     }
-
-    // === 2. 初始化录入表单 ===
-    if (global.form && typeof global.form.init === 'function') {
-      global.form.init();
-      console.log('[main] form initialized');
-    }
-
-    // === 3. 初始化列表视图 ===
-    if (global.listView && typeof global.listView.init === 'function') {
-      global.listView.init();
-      console.log('[main] listView initialized');
-    }
-
-    // === 4. 绑定数据管理按钮 ===
-    bindDataManagement();
-
-    // === 5. 首次全量刷新 ===
-    global.renderer.refreshAll();
-
-    console.log('[main] App ready ✅');
   }
 
   // ============ 数据管理按钮事件 ============

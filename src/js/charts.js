@@ -17,77 +17,60 @@
     _retryCount: 0,
     _MAX_RETRY: 5,
 
-    /** 初始化 ECharts 实例 */
+    /**
+     * 初始化 ECharts 实例
+     * 返回 Promise，resolve 后所有实例已就绪 + resize 已执行
+     * 调用方可以 await charts.init() 彻底消除时序竞态
+     */
     init() {
-      // 1. echarts 是否加载
-      if (typeof global.echarts === 'undefined') {
-        console.error('[charts] ❌ echarts not loaded! Check CDN connection.');
-        // 给所有容器降级提示
-        ['pie-chart', 'bar-chart', 'line-chart', 'stack-chart'].forEach((id) => {
-          showDegraded(id, '📊 图表库加载失败<br>请检查网络后刷新页面');
-        });
-        return false;
-      }
+      return new Promise((resolve, reject) => {
+        // 1. echarts 是否加载
+        if (typeof global.echarts === 'undefined') {
+          console.error('[charts] ❌ echarts not loaded! Check CDN connection.');
+          ['pie-chart', 'bar-chart', 'line-chart', 'stack-chart'].forEach((id) => {
+            showDegraded(id, '📊 图表库加载失败<br>请检查网络后刷新页面');
+          });
+          reject(new Error('echarts not loaded'));
+          return;
+        }
 
-      // 2. 用 requestAnimationFrame 等浏览器 layout 完成
-      requestAnimationFrame(() => {
+        // 2. 用 requestAnimationFrame 等浏览器 layout 完成（display:none → block 后必须等一帧）
         requestAnimationFrame(() => {
-          // 双 rAF 确保 display:none → block 后浏览器已完成 layout
+          requestAnimationFrame(() => {
+            this.instances = {}; // 重置（防止重复 init 留下脏实例）
 
-          const pieDom = document.getElementById('pie-chart');
-          const barDom = document.getElementById('bar-chart');
-          const lineDom = document.getElementById('line-chart');
-          const stackDom = document.getElementById('stack-chart');
+            try {
+              const pieDom = document.getElementById('pie-chart');
+              const barDom = document.getElementById('bar-chart');
+              const lineDom = document.getElementById('line-chart');
+              const stackDom = document.getElementById('stack-chart');
 
-          this.instances = {}; // 重置（防止重复 init 留下脏实例）
+              if (pieDom) { pieDom.innerHTML = ''; this.instances.pie = echarts.init(pieDom); }
+              if (barDom) { barDom.innerHTML = ''; this.instances.bar = echarts.init(barDom); }
+              if (lineDom) { lineDom.innerHTML = ''; this.instances.line = echarts.init(lineDom); }
+              if (stackDom) { stackDom.innerHTML = ''; this.instances.stack = echarts.init(stackDom); }
 
-          try {
-            if (pieDom) {
-              pieDom.innerHTML = '';
-              this.instances.pie = echarts.init(pieDom);
-            }
-            if (barDom) {
-              barDom.innerHTML = '';
-              this.instances.bar = echarts.init(barDom);
-            }
-            if (lineDom) {
-              lineDom.innerHTML = '';
-              this.instances.line = echarts.init(lineDom);
-            }
-            if (stackDom) {
-              stackDom.innerHTML = '';
-              this.instances.stack = echarts.init(stackDom);
-            }
-
-            // 3. 手动 resize 一次（确保容器尺寸正确）
-            setTimeout(() => {
-              Object.values(this.instances).forEach((inst) => {
-                try { inst.resize(); } catch (e) {}
+              // 3. resize + 监听窗口
+              Object.values(this.instances).forEach((inst) => { try { inst.resize(); } catch (e) {} });
+              window.addEventListener('resize', () => {
+                Object.values(this.instances).forEach((inst) => { try { inst.resize(); } catch (e) {} });
               });
-            }, 10);
 
-            // 4. 窗口 resize 自适应
-            window.addEventListener('resize', () => {
-              Object.values(this.instances).forEach((inst) => {
-                try { inst.resize(); } catch (e) {}
-              });
-            });
+              console.log('[charts] ✅ initialized. instances:', Object.keys(this.instances).join(', '));
 
-            console.log('[charts] ✅ initialized. instances:', Object.keys(this.instances).join(', '));
+              // 4. 调试日志：确认 dataStore 有数据
+              const debugList = global.dataStore ? global.dataStore.getAll() : [];
+              console.log('[charts] dataStore.getAll() returned:', debugList.length, 'expenses');
 
-            // 5. init 完了立即触发一次 refreshAll（如果已经有数据的话）
-            if (this._pendingFilter !== undefined) {
-              console.log('[charts] auto-refreshing after init...');
-              this.refreshAll(this._pendingFilter);
-              this._pendingFilter = undefined;
+              // 5. resolve Promise，让调用方可以 await
+              resolve(true);
+            } catch (e) {
+              console.error('[charts] ❌ echarts.init failed:', e);
+              reject(e);
             }
-          } catch (e) {
-            console.error('[charts] ❌ echarts.init failed:', e);
-          }
+          });
         });
       });
-
-      return true;
     },
 
     /** 统一刷新所有图表 */

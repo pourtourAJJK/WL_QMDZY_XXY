@@ -425,7 +425,12 @@ section h3 {
 #bar-chart,
 #line-chart {
   width: 100%;
-  height: 260px;
+  height: 280px;
+}
+
+#stack-chart {
+  width: 100%;
+  height: 320px;
 }
 
 /* List */

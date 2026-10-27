@@ -122,6 +122,54 @@
       }
       return data;
     },
+
+    /**
+     * 下载二进制文件（如服务端生成的 .xlsx）
+     * @param {string} path
+     * @returns {Promise<{blob: Blob, filename: string}>}
+     */
+    async download(path, retry) {
+      const canRetry = retry !== false;
+      const access = this.getAccessToken();
+      if (!access) throw new ApiError('未登录或登录已过期', 401, {});
+
+      let response;
+      try {
+        response = await fetch(this.base + path, {
+          method: 'GET',
+          headers: { Authorization: 'Bearer ' + access },
+        });
+      } catch (e) {
+        throw new ApiError('无法连接后端服务，请确认已启动 http://127.0.0.1:8000', 0, {});
+      }
+
+      if (response.status === 401) {
+        if (!canRetry) {
+          this.setTokens(null);
+          throw new ApiError('登录已过期，请重新登录', 401, {});
+        }
+        await this.refreshAccessToken();
+        return this.download(path, false);
+      }
+
+      if (!response.ok) {
+        let detail = '';
+        try {
+          const data = await response.json();
+          detail = (data && data.detail) || '';
+        } catch (e) {
+          detail = '';
+        }
+        throw new ApiError(detail || ('下载失败（HTTP ' + response.status + '）'), response.status, {});
+      }
+
+      const disposition = response.headers.get('Content-Disposition') || '';
+      const matched = disposition.match(/filename="?([^";]+)"?/);
+      return {
+        blob: await response.blob(),
+        filename: matched ? matched[1] : 'export.xlsx',
+      };
+    },
   };
 
   global.api = api;

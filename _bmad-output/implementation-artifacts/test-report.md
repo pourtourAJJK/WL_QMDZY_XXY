@@ -10,7 +10,7 @@
 - 前端：Node 24（VM 加载真实模块）+ 浏览器（`http://localhost:8080`）
 - 数据库：SQLite `backend/db.sqlite3`（已 gitignore）
 
-## 1. 后端单元测试 —— 24/24 PASS
+## 1. 后端单元测试 —— 28/28 PASS
 
 执行：`cd backend && python manage.py test`
 
@@ -35,8 +35,25 @@
 | 导入 | XLSX（中文表头）解析正确 | PASS |
 | 导入 | 单行金额非法 → 整份 400 且原数据不变 | PASS |
 | 导入 | 未认证 401；未知扩展名 400；导入不影响其他用户 | PASS |
+| 导出 | 未认证 401；仅返回本人记录 | PASS |
+| 导出 | `Content-Type` 为 xlsx、`Content-Disposition` 带文件名、PK 魔数、表头与行数正确 | PASS |
+| 导出 | 无数据时仅表头一行 | PASS |
+| 导出 | 导出文件可直接再导入（round-trip） | PASS |
 
-## 2. 接口联调（真实服务）—— 23/23 PASS
+## 2. XLSX 导出 / 导入回环联调（真实服务）—— 30/30 PASS
+
+执行：后端 `runserver 127.0.0.1:8000`，Python `requests` + `openpyxl` 真实下载并反读导出的工作簿。
+
+覆盖：
+- 未认证访问 `GET /api/expenses/export/` → 401
+- 写入 3 条含逗号备注的记录 → 导出：HTTP 200、`Content-Type` 为 spreadsheetml、`Content-Disposition` 带 `expenses-YYYYMMDD.xlsx`、`X-Exported-Count: 3`、文件头 `PK`、体积 5,344 bytes
+- openpyxl 反读：表头「日期/类别/金额/备注/创建时间」、工作表名「开销记录」、4 行（1 表头 + 3 数据）、`freeze_panes = A2`、金额为数值且 `[8.0, 35.5, 120.0]`、备注 `外卖,含饮料` 原样保留
+- 清空 → 重新导入刚导出的 xlsx → `{"imported": 3}` → 回读金额/日期/类别/备注全部一致
+- 旧版 `.xls` 上传 → 400「暂不支持旧版 .xls，请用 Excel 另存为 .xlsx 后重试」，且原数据仍为 3 条
+
+结果：`总计 30/30 PASS`
+
+## 3. 接口联调（真实服务）—— 23/23 PASS
 
 执行：后端 `runserver 127.0.0.1:8000` + 前端 `http.server 8080`，Python requests 脚本逐项请求。
 
@@ -44,7 +61,7 @@
 
 结果：`总计 23/23 PASS`
 
-## 3. 前端模块联调（Node VM + 真实后端）—— 15/15 PASS
+## 4. 前端模块联调（Node VM + 真实后端）—— 15/15 PASS
 
 执行：在 Node 24 的 `vm` 沙箱中加载仓库真实的 `src/js/api.js`、`src/js/data-store.js`，用 fake `sessionStorage` 对齐浏览器行为，直接请求运行中的 Django。
 
@@ -52,7 +69,7 @@
 
 结果：`总计 15/15 PASS`
 
-## 4. 静态检查
+## 5. 静态检查
 
 | 检查 | 结果 |
 |------|------|
@@ -61,12 +78,12 @@
 | 篡改路径复核：`grep auth_accounts / auth_lock` | 仅 `auth.js` 的清理函数命中，无读写逻辑 |
 | 敏感信息：`db.sqlite3`、`.env` 是否被忽略 | 已忽略 |
 
-## 5. 未执行项（明确说明）
+## 6. 未执行项（明确说明）
 
-- **浏览器 UI 逐点击验证未完成**：浏览器自动化插件连接失败（`os error 10061`），无法驱动 Chrome。已改为上方第 3 节的模块级联调替代，仍建议人工在 `http://localhost:8080` 走一次"注册 → 登录 → 录入 → 导入"。
+- **浏览器 UI 逐点击验证未完成**：浏览器自动化插件连接失败（`os error 10061`），无法驱动 Chrome。已改为上方第 4 节的模块级联调替代，仍建议人工在 `http://localhost:8080` 走一次"注册 → 登录 → 录入 → 导出 Excel → 清空 → 导入 xlsx"。
 - **PDF 导入 / 内容转写测试未执行**：功能本身尚未实现（需求 1 被中断），不属于本轮范围。
 - 多进程部署下的限流共享（Redis）未验证：当前 LocMem 缓存仅单进程有效。
 
 ## 结论
 
-后端认证链路（注册、登录、JWT、锁定、限流、登出拉黑）与开销导入服务端校验均通过自动化验证，旧版前端 localStorage 账号/锁定逻辑已彻底移除。剩余风险集中在部署形态（SQLite/LocMem）与浏览器人工复核。
+后端认证链路（注册、登录、JWT、锁定、限流、登出拉黑）、开销导入服务端校验，以及新增的 XLSX 服务端导出与"导出→再导入"回环均通过自动化验证。前端已移除 SheetJS 依赖，旧版 localStorage 账号/锁定逻辑已彻底移除。剩余风险集中在部署形态（SQLite/LocMem）与浏览器人工复核。

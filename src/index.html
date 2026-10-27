@@ -177,7 +177,7 @@
         </div>
         <label class="btn btn-outline">
           导入备份
-          <input type="file" id="import-file" accept=".json,.csv,.xlsx,.xls" hidden>
+          <input type="file" id="import-file" accept=".json,.csv,.xlsx" hidden>
         </label>
         <button id="clear-btn" class="btn btn-danger">清空所有数据</button>
       </div>
@@ -187,10 +187,6 @@
   <!-- ECharts CDN：jsdelivr（国际） + bootcdn（国内备用） -->
   <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
   <script>if (typeof echarts === 'undefined') { document.write('<script src="https://cdn.bootcdn.net/ajax/libs/echarts/5.5.0/echarts.min.js"><\\/script>'); }</script>
-
-  <!-- SheetJS (xlsx) CDN：jsdelivr + bootcdn -->
-  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-  <script>if (typeof XLSX === 'undefined') { document.write('<script src="https://cdn.bootcdn.net/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"><\\/script>'); }</script>
 
   <!-- 业务 JS 模块（严格按依赖顺序加载） -->
   <script src="js/api.js"></script>

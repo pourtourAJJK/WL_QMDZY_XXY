@@ -162,3 +162,70 @@ class ImportTests(ExpenseTestBase):
         self.assertEqual(
             Expense.objects.get(user=self.other).date, date(2026, 10, 1)
         )
+
+
+class ExportTests(ExpenseTestBase):
+    XLSX_CONTENT_TYPE = (
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+    def setUp(self):
+        super().setUp()
+        self.export_url = reverse("expense-export")
+
+    def test_requires_jwt(self):
+        self.assertEqual(
+            self.client.get(self.export_url).status_code, status.HTTP_401_UNAUTHORIZED
+        )
+
+    def test_export_returns_xlsx_with_only_own_rows(self):
+        Expense.objects.create(
+            user=self.user, amount=35.5, category="餐饮", date="2026-10-27", note="外卖"
+        )
+        Expense.objects.create(
+            user=self.other, amount=99, category="购物", date="2026-10-20"
+        )
+
+        response = self.client.get(self.export_url, **self.auth())
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response["Content-Type"], self.XLSX_CONTENT_TYPE)
+        self.assertIn(".xlsx", response["Content-Disposition"])
+        self.assertTrue(response.content.startswith(b"PK"))
+
+        workbook = openpyxl.load_workbook(io.BytesIO(response.content))
+        rows = list(workbook.active.iter_rows(values_only=True))
+        self.assertEqual(list(rows[0]), ["日期", "类别", "金额", "备注", "创建时间"])
+        self.assertEqual(len(rows), 2)  # 表头 + 本人 1 条（他人数据不导出）
+        self.assertEqual(rows[1][1], "餐饮")
+        self.assertAlmostEqual(rows[1][2], 35.5)
+        self.assertEqual(rows[1][3], "外卖")
+
+    def test_export_empty_has_header_only(self):
+        response = self.client.get(self.export_url, **self.auth())
+        rows = list(
+            openpyxl.load_workbook(io.BytesIO(response.content)).active.iter_rows(
+                values_only=True
+            )
+        )
+        self.assertEqual(len(rows), 1)
+
+    def test_export_then_reimport_round_trip(self):
+        Expense.objects.create(
+            user=self.user, amount=35, category="餐饮", date="2026-10-27", note="外卖"
+        )
+        Expense.objects.create(
+            user=self.user, amount=120.5, category="购物", date="2026-10-26", note="超市"
+        )
+
+        exported = self.client.get(self.export_url, **self.auth())
+        upload = SimpleUploadedFile("roundtrip.xlsx", exported.content)
+        response = self.client.post(
+            self.import_url, {"file": upload}, format="multipart", **self.auth()
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.json()["imported"], 2)
+        self.assertEqual(Expense.objects.filter(user=self.user).count(), 2)
+        self.assertTrue(
+            Expense.objects.filter(user=self.user, category="购物", amount=120.5).exists()
+        )

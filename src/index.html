@@ -184,10 +184,13 @@
     </section>
   </div>
 
-  <!-- ECharts CDN -->
+  <!-- ECharts CDN：jsdelivr（国际） + bootcdn（国内备用） -->
   <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
-  <!-- SheetJS (xlsx) CDN — Excel 导出导入 -->
+  <script>if (typeof echarts === 'undefined') { document.write('<script src="https://cdn.bootcdn.net/ajax/libs/echarts/5.5.0/echarts.min.js"><\\/script>'); }</script>
+
+  <!-- SheetJS (xlsx) CDN：jsdelivr + bootcdn -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script>if (typeof XLSX === 'undefined') { document.write('<script src="https://cdn.bootcdn.net/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"><\\/script>'); }</script>
 
   <!-- 业务 JS 模块（严格按依赖顺序加载） -->
   <script src="js/auth.js"></script>            <!-- 认证模块最先（路由守卫 + 登录态检查） -->

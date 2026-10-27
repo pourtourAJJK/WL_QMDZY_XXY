@@ -59,7 +59,7 @@ python -m http.server 8080
 | 列表 | 明细列表 | 日期倒序、类别标签、单条删除 |
 | 列表 | 类别筛选 | 下拉筛选，列表与所有图表同步刷新 |
 | 数据 | 三格式导出 | JSON / CSV（含 UTF-8 BOM，Excel 打开不乱码）/ XLSX（后端 openpyxl 生成，带表头样式、列宽、冻结首行、金额格式） |
-| 数据 | 三格式导入 | 上传至后端逐行校验（JSON/CSV/XLSX），任一行非法则整份拒绝且原数据不变；导出的 xlsx 可直接再导入 |
+| 数据 | 三格式导入 | 上传至后端逐行校验（JSON/CSV/XLSX），任一行非法则整份拒绝且原数据不变；导出的 xlsx 可直接再导入；兼容记账软件导出的"HTML 表格伪装 .xls/.xlsx" |
 | 数据 | 清空数据 | 双重确认，防止误触 |
 
 ## 后端接口
@@ -131,7 +131,7 @@ WEILAI_BYSJ_X/
 
 ## Git 工作流记录
 
-本项目严格遵循 conventional commit 格式，每个功能或修复均建 feature 分支开发后 merge 回 main。截至 XLSX 服务端导出迭代开始前，仓库共 **38 次提交**，其中 **13 次**为 merge 提交（本次 `feature/backend-xlsx-export` 为第 14 个 feature 分支）：
+本项目严格遵循 conventional commit 格式，每个功能或修复均建 feature 分支开发后 merge 回 main。截至 XLSX 导入兼容修复迭代开始前，仓库共 **42 次提交**，其中 **14 次**为 merge 提交（本次 `feature/fix-xlsx-html-import` 为第 15 个 feature 分支）：
 
 ```
 384124e Merge branch 'feature/ui-redesign' into main
@@ -181,6 +181,7 @@ ef68659 Merge branch 'feature/data-management' into main
 | 迭代 · 文档同步 | `implementation-artifacts/iteration-12.md` | README 与仓库现状对齐 | `4a1f742` |
 | 迭代 · 后端认证 | `implementation-artifacts/iteration-13.md` | 认证迁移 Django：PBKDF2 + JWT + 限流 + 服务端导入 | 本次提交 |
 | 迭代 · XLSX 导出 | `implementation-artifacts/iteration-14.md` | XLSX 导出迁移后端 + 导出/导入回环 | 本次提交 |
+| 迭代 · 导入修复 | `implementation-artifacts/iteration-15.md` | 兼容 HTML 伪 Excel + 前端防缓存 | 本次提交 |
 | 阶段四 · 验证改进 | `implementation-artifacts/build-report.md` | 构建报告（零构建说明） | `3df6fbc` |
 | 阶段四 · 验证改进 | `implementation-artifacts/test-report.md` | 测试报告（后端单测 + 联调） | `9ce9cbb` / 本次提交 |
 

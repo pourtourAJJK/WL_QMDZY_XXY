@@ -2,6 +2,7 @@
 import io
 import json
 from datetime import date
+from decimal import Decimal
 
 import openpyxl
 from django.contrib.auth import get_user_model
@@ -209,6 +210,41 @@ class ImportTests(ExpenseTestBase):
         response = self.upload("bill.xls", html.encode("utf-8"))
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(Expense.objects.filter(user=self.user).count(), 1)
+
+    # ---- 微信支付账单（前若干行账单元信息 + 表头含"交易时间""金额(元)"） ----
+
+    def _wechat_bill_xlsx(self):
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.append(["微信支付账单明细"])
+        ws.append(["微信昵称：[tester]"])
+        ws.append(["起始时间：[2026-10-01] 终止时间：[2026-10-27]"])
+        ws.append([])
+        ws.append(["共3笔记录"])
+        ws.append(["----------------------微信支付账单明细列表--------------------"])
+        ws.append(["交易时间", "交易类型", "交易对方", "商品", "收/支", "金额(元)",
+                   "支付方式", "当前状态", "交易单号", "商户单号", "备注"])
+        ws.append(["2026-10-27 10:20:19", "商户消费", "蜜雪冰城", "蜜雪冰城954610店", "支出", 6,
+                   "零钱", "支付成功", "tx1", "m1", "/"])
+        ws.append(["2026-10-26 21:29:31", "微信红包", "某人", "/", "收入", 0.01,
+                   "/", "已存入零钱", "tx2", "m2", "/"])  # 收入应被跳过
+        ws.append(["2026-10-26 20:12:49", "商户消费", "好想来零食乐园", "清远佛冈店", "支出", 17,
+                   "零钱", "支付成功", "tx3", "m3", "/"])
+        ws.append(["2026-10-25 12:00:00", "商户消费", "样样巴士", "车票", "支出", 35,
+                   "零钱通", "已全额退款", "tx4", "m4", "/"])  # 退款应被跳过
+        buf = io.BytesIO()
+        wb.save(buf)
+        return buf.getvalue()
+
+    def test_import_wechat_bill_xlsx(self):
+        response = self.upload("wechat.xlsx", self._wechat_bill_xlsx())
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["imported"], 2)  # 收入/退款已跳过
+        amounts = {e.amount for e in Expense.objects.filter(user=self.user)}
+        self.assertEqual(amounts, {Decimal("6.00"), Decimal("17.00")})
+        mixue = Expense.objects.get(user=self.user, amount=Decimal("6.00"))
+        self.assertEqual(mixue.category, "商户消费")
+        self.assertIn("蜜雪冰城", mixue.note)
 
 
 class ExportTests(ExpenseTestBase):

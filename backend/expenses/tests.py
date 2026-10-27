@@ -163,6 +163,53 @@ class ImportTests(ExpenseTestBase):
             Expense.objects.get(user=self.other).date, date(2026, 10, 1)
         )
 
+    # ---- "伪 Excel"（HTML 表格改名 .xls/.xlsx，账单导出常见） ----
+
+    HTML_TABLE = (
+        "<html><head><meta charset='utf-8'></head><body>"
+        "<table><tr><th>日期</th><th>类别</th><th>金额</th><th>备注</th></tr>"
+        "<tr><td>2026-10-27</td><td>餐饮</td><td>35.5</td><td>外卖,加班</td></tr>"
+        "<tr><td>2026-10-26</td><td>交通</td><td>8</td><td></td></tr>"
+        "</table></body></html>"
+    )
+
+    def test_import_html_table_named_xlsx(self):
+        response = self.upload("bill.xlsx", self.HTML_TABLE.encode("utf-8"))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["imported"], 2)
+        self.assertTrue(
+            Expense.objects.filter(user=self.user, category="餐饮", amount=35.5).exists()
+        )
+
+    def test_import_html_table_named_xls(self):
+        response = self.upload("bill.xls", self.HTML_TABLE.encode("utf-8"))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["imported"], 2)
+
+    def test_import_html_table_gb18030(self):
+        response = self.upload("bill.xls", self.HTML_TABLE.encode("gb18030"))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["imported"], 2)
+
+    def test_import_html_without_table_rejected(self):
+        html = "<html><body><p>这是一个网页，没有表格</p></body></html>"
+        response = self.upload("bill.xlsx", html.encode("utf-8"))
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("另存为 .xlsx", response.data["detail"])
+
+    def test_import_binary_xls_rejected_with_hint(self):
+        ole2 = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\x00" * 64
+        response = self.upload("bill.xls", ole2)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn(".xlsx", response.data["detail"])
+
+    def test_import_html_keeps_data_on_failure(self):
+        Expense.objects.create(user=self.user, amount=5, category="其他", date="2026-01-01")
+        html = "<html><body><p>no table here</p></body></html>"
+        response = self.upload("bill.xls", html.encode("utf-8"))
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(Expense.objects.filter(user=self.user).count(), 1)
+
 
 class ExportTests(ExpenseTestBase):
     XLSX_CONTENT_TYPE = (

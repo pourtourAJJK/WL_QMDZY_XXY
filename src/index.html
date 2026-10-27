@@ -11,7 +11,7 @@
   <div id="login-view" class="login-view">
     <div class="login-card">
       <div class="login-header">
-        <h1>🔐 个人开销仪表盘</h1>
+        <h1>个人开销仪表盘</h1>
         <p class="login-subtitle">请登录您的账户</p>
       </div>
 
@@ -62,7 +62,7 @@
         </div>
       </form>
 
-      <p class="auth-hint">⚠️ 提示：连续输错 5 次密码，账号将被锁定 5 分钟</p>
+      <p class="auth-hint" style="font-size:12px;color:#9ca3af;text-align:center;margin-top:16px;">连续输错 5 次密码，账号将被锁定 5 分钟</p>
     </div>
   </div>
 
@@ -70,12 +70,12 @@
   <div id="dashboard-container" class="container" style="display: none;">
     <header class="app-header">
       <div class="header-left">
-        <h1>💰 个人开销统计仪表盘</h1>
+        <h1>个人开销统计仪表盘</h1>
         <p class="subtitle">本地存储 · 私密数据 · 登录后查看</p>
       </div>
       <div class="header-right">
-        <span class="user-info" id="current-user">👤 游客</span>
-        <button id="logout-btn" class="btn btn-outline btn-logout">🚪 登出</button>
+        <span class="user-info" id="current-user">游客</span>
+        <button id="logout-btn" class="btn btn-outline btn-logout">登出</button>
       </div>
     </header>
 
@@ -130,19 +130,19 @@
     <!-- 图表区 -->
     <section class="charts-section">
       <div class="chart-container" id="chart-pie">
-        <h3>📊 类别占比（环形图）</h3>
+        <h3>类别占比（环形图）</h3>
         <div id="pie-chart"></div>
       </div>
       <div class="chart-container" id="chart-bar">
-        <h3>📈 月度支出（柱状图）</h3>
+        <h3>月度支出（柱状图）</h3>
         <div id="bar-chart"></div>
       </div>
       <div class="chart-container chart-full" id="chart-stack">
-        <h3>🏗️ 每月各类别分布（堆叠柱状图）</h3>
+        <h3>每月各类别分布（堆叠柱状图）</h3>
         <div id="stack-chart"></div>
       </div>
       <div class="chart-container chart-full" id="chart-line">
-        <h3>📉 本月支出趋势（折线图）</h3>
+        <h3>本月支出趋势（折线图）</h3>
         <div id="line-chart"></div>
       </div>
     </section>
@@ -150,7 +150,7 @@
     <!-- 开销列表 -->
     <section class="list-section">
       <div class="list-header">
-        <h2>📋 开销明细</h2>
+        <h2>开销明细</h2>
         <div class="list-filter">
           <label>筛选：</label>
           <select id="filter-category">
@@ -165,21 +165,21 @@
 
     <!-- 数据管理 -->
     <section class="data-section">
-      <h2>⚙️ 数据管理</h2>
+      <h2>数据管理</h2>
       <div class="data-actions">
         <div class="dropdown-wrapper">
-          <button id="export-dropdown" class="btn btn-outline dropdown-toggle">📤 导出 ▾</button>
+          <button id="export-dropdown" class="btn btn-outline dropdown-toggle">导出 ▾</button>
           <div class="dropdown-menu" id="export-menu">
-            <button type="button" class="dropdown-item" data-format="json">📄 导出为 JSON</button>
-            <button type="button" class="dropdown-item" data-format="csv">📊 导出为 CSV</button>
-            <button type="button" class="dropdown-item" data-format="excel">📑 导出为 Excel</button>
+            <button type="button" class="dropdown-item" data-format="json">导出为 JSON</button>
+            <button type="button" class="dropdown-item" data-format="csv">导出为 CSV</button>
+            <button type="button" class="dropdown-item" data-format="excel">导出为 Excel</button>
           </div>
         </div>
         <label class="btn btn-outline">
-          📥 导入备份
+          导入备份
           <input type="file" id="import-file" accept=".json,.csv,.xlsx,.xls" hidden>
         </label>
-        <button id="clear-btn" class="btn btn-danger">🗑️ 清空所有数据</button>
+        <button id="clear-btn" class="btn btn-danger">清空所有数据</button>
       </div>
     </section>
   </div>
@@ -193,7 +193,7 @@
   <script>if (typeof XLSX === 'undefined') { document.write('<script src="https://cdn.bootcdn.net/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"><\\/script>'); }</script>
 
   <!-- 业务 JS 模块（严格按依赖顺序加载） -->
-  <script src="js/auth.js"></script>            <!-- 认证模块最先（路由守卫 + 登录态检查） -->
+  <script src="js/auth.js"></script>
   <script src="js/categories.js"></script>
   <script src="js/data-store.js"></script>
   <script src="js/charts.js"></script>
@@ -201,6 +201,6 @@
   <script src="js/list-view.js"></script>
   <script src="js/form.js"></script>
   <script src="js/renderer.js"></script>
-  <script src="js/main.js"></script>            <!-- main.js 最后，auth.js 暴露 onAuthReady -->
+  <script src="js/main.js"></script>
 </body>
 </html>

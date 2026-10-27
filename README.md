@@ -1,49 +1,54 @@
 # Personal Expense Dashboard — 个人开销统计仪表盘
 
-《未来技术》课程大作业 · 纯前端零依赖开销可视化工具
+《未来技术》课程大作业 · 前后端分离开销可视化工具（Django + JWT + 原生 JS）
 
 ---
 
 ## 项目简介
 
-一个**打开 HTML 就能用**的个人开销统计仪表盘。快速录入每一笔消费，自动按类别/月份/日期生成可视化图表，让"钱花到了哪里"一目了然。
+一个前后端分离的个人开销统计仪表盘。快速录入每一笔消费，自动按类别/月份/日期生成可视化图表，让"钱花到了哪里"一目了然。
 
-- **零安装、零后端** — 双击 `src/index.html` 即可运行
-- **隐私优先** — 所有数据 100% 存在浏览器 localStorage，不上传任何服务器
-- **本地账户体系** — 注册 / 登录 / 登出，密码 SHA-256 哈希存储，连续 5 次失败锁定 5 分钟
+- **数据在后端** — 开销记录存于 Django + SQLite，按登录用户隔离，不只是浏览器本地数据
+- **生产级认证** — 服务端 PBKDF2 加盐哈希、JWT 会话（access 30 分钟 / refresh 1 天）、5 次失败锁定 5 分钟、接口限流
 - **即时可视化** — 录入后环形图、月度柱状图、类别堆叠图、每日折线图自动刷新
-- **数据可迁移** — JSON / CSV / Excel 三种格式导出与导入
+- **数据可迁移** — JSON / CSV / Excel 三种格式导出，导入由后端逐行校验后覆盖写入
+- **零构建前端** — 仍然是原生 JavaScript + CSS，不需要打包工具
 
-## 启动方式（3 选 1）
+## 启动方式（前后端各起一个进程）
 
-### 方式 1：直接双击（最简单）
+### 1. 启动后端（端口 8000）
+
+```powershell
+cd backend
+pip install -r requirements.txt        # 首次运行
+python manage.py migrate               # 首次运行（生成 SQLite 表）
+python manage.py runserver 127.0.0.1:8000
 ```
-src/index.html
-```
 
-### 方式 2：Python 本地服务器
+### 2. 启动前端（端口 8080）
+
 ```powershell
 cd src
 python -m http.server 8080
-# 打开 http://localhost:8080
+# 浏览器打开 http://localhost:8080
 ```
 
-### 方式 3：Node.js serve
-```powershell
-npx serve src -p 8080
-# 打开 http://localhost:8080
-```
-
-> **端口固定为 8080**：localStorage 按 origin（协议 + 域名 + 端口）隔离，换端口会导致账户与数据"消失"，因此演示时请始终使用同一端口。
+> **必须以 http://localhost:8080 访问**：前端通过 CORS 白名单调用 `http://127.0.0.1:8000`，直接双击 `index.html`（file://）会被浏览器跨域策略拦截。
 >
-> **CDN 依赖**：ECharts 5.5.0 与 SheetJS 0.18.5 走 jsDelivr，并内置 bootcdn 国内备用源；两者均加载失败时页面会给出降级提示（图表区显示"图表库加载失败"，Excel 导入导出自动禁用）。
+> **端口固定为 8080**：后端 CORS 只放行 8080 / 5500，换端口需同步修改 `backend/config/settings.py` 的 `CORS_ALLOWED_ORIGINS`。
+>
+> **生产环境**：必须通过环境变量注入 `DJANGO_SECRET_KEY`，并设置 `DJANGO_DEBUG=0`；数据库与限流缓存应替换为 PostgreSQL + Redis。
+>
+> **CDN 依赖**：ECharts 5.5.0 与 SheetJS 0.18.5 走 jsDelivr，并内置 bootcdn 国内备用源；两者均加载失败时页面会给出降级提示。
 
 ## 核心功能
 
 | 模块 | 功能 | 说明 |
 |------|------|------|
-| 认证 | 注册 / 登录 / 登出 | 账号 ≥3 位、密码 ≥6 位，SHA-256 哈希后存储 |
-| 认证 | 失败锁定 | 连续 5 次密码错误锁定账户 5 分钟，锁定状态持久化 |
+| 认证 | 注册 / 登录 / 登出 | 后端 PBKDF2-SHA256 加盐哈希，JWT 令牌存 sessionStorage |
+| 认证 | 失败锁定 | 服务端累计连续 5 次失败后锁定 5 分钟（`LoginAttempt` 表），跨设备生效 |
+| 认证 | 接口限流 | 登录 10/min、注册 5/hour、导入 10/hour，全站匿名 30/min、登录用户 120/min |
+| 认证 | 会话续期 | access 过期自动用 refresh 换取新令牌；登出时后端拉黑 refresh |
 | 录入 | 开销录入 | 金额 + 类别 + 日期 + 备注，提交后全部视图同步刷新 |
 | 录入 | 7 个预置类别 | 餐饮、交通、购物、娱乐、居住、医疗、其他，支持自定义 |
 | 可视化 | 环形图 | 类别占比，中心显示总金额，颜色按类别稳定映射 |
@@ -54,20 +59,39 @@ npx serve src -p 8080
 | 列表 | 明细列表 | 日期倒序、类别标签、单条删除 |
 | 列表 | 类别筛选 | 下拉筛选，列表与所有图表同步刷新 |
 | 数据 | 三格式导出 | JSON / CSV（含 UTF-8 BOM，Excel 打开不乱码）/ Excel |
-| 数据 | 三格式导入 | 按文件扩展名分派解析，导入前二次确认 |
+| 数据 | 三格式导入 | 上传至后端逐行校验（JSON/CSV/XLSX），任一行非法则整份拒绝且原数据不变 |
 | 数据 | 清空数据 | 双重确认，防止误触 |
+
+## 后端接口
+
+所有接口统一返回 JSON，错误体为 `{"detail": "...", "retry_after"?: n}`；除注册/登录/刷新外均需 `Authorization: Bearer <access>`。
+
+| 方法 | 路径 | 说明 | 权限 / 限流 |
+|------|------|------|-------------|
+| POST | `/api/auth/register/` | 注册（PBKDF2 哈希落库） | 匿名 · 5/hour |
+| POST | `/api/auth/login/` | 登录，返回 access + refresh | 匿名 · 10/min |
+| POST | `/api/auth/refresh/` | 刷新 access（轮换 refresh） | 匿名 |
+| GET | `/api/auth/me/` | 当前用户信息 | JWT |
+| POST | `/api/auth/logout/` | 拉黑 refresh 令牌 | JWT |
+| GET/POST | `/api/expenses/` | 列出 / 新增开销（按 user 隔离） | JWT · 120/min |
+| DELETE | `/api/expenses/<id>/` | 删除单条 | JWT |
+| DELETE | `/api/expenses/clear/` | 清空本人数据 | JWT |
+| POST | `/api/expenses/import/` | 上传 JSON/CSV/XLSX，服务端解析校验后覆盖 | JWT · 10/hour |
 
 ## 技术栈
 
 | 层 | 选型 |
 |----|------|
-| 语言 | 原生 JavaScript（ES2020，IIFE 模块化，零构建） |
+| 前端 | 原生 JavaScript（ES2020，IIFE 模块化，零构建）+ 原生 CSS 3 设计令牌 |
 | 图表 | ECharts 5.5.0（jsDelivr + bootcdn 双源） |
-| 表格 | SheetJS 0.18.5（CSV / Excel 解析与生成，可选降级） |
-| 认证 | Web Crypto API `crypto.subtle.digest('SHA-256')` |
-| 样式 | 原生 CSS 3 + CSS 自定义属性设计令牌（无框架） |
-| 存储 | localStorage（业务数据 / 账户）+ sessionStorage（登录态） |
-| 构建 | 无需构建（纯 HTML 打开即用） |
+| 表格 | SheetJS 0.18.5（仅前端导出用） |
+| 后端 | Django 5.2 + Django REST Framework 3.18 |
+| 认证 | SimpleJWT（access 30min / refresh 1d，轮换 + 黑名单） |
+| 密码 | Django PBKDF2-SHA256（随机盐，1,000,000 次迭代） |
+| 限流 | DRF Throttle（Anon/User/ScopedRateThrottle，LocMem，生产换 Redis） |
+| 数据库 | SQLite（`backend/db.sqlite3`，已 gitignore） |
+| CORS | django-cors-headers 白名单（仅 8080 / 5500） |
+| 文件解析 | openpyxl（服务端解析 .xlsx） |
 
 ## 项目结构
 
@@ -78,15 +102,25 @@ WEILAI_BYSJ_X/
 │   ├── css/
 │   │   └── style.css        全部样式
 │   └── js/
-│       ├── auth.js          注册 / 登录 / 登出 + 5 次锁定 + SHA-256 哈希
+│       ├── api.js           后端客户端：JWT 附加 + 401 自动刷新 + 统一错误
+│       ├── auth.js          注册 / 登录 / 登出 / 路由守卫（无本地账号逻辑）
 │       ├── categories.js    类别定义 + 颜色映射
-│       ├── data-store.js    数据层：CRUD + JSON/CSV/Excel 导入导出
+│       ├── data-store.js    后端数据层：内存快照 + CRUD + 文件导入 + 三格式导出
 │       ├── charts.js        四张 ECharts 图表（环形/月度/堆叠/折线）
 │       ├── cards.js         三张统计卡片
 │       ├── list-view.js     开销列表 + 筛选 + 删除
 │       ├── form.js          录入表单 + 校验 + 提交
 │       ├── renderer.js      统一刷新协调器
-│       └── main.js          应用入口 + 登录态路由守卫
+│       └── main.js          应用入口 + 业务模块初始化
+├── backend/
+│   ├── manage.py
+│   ├── requirements.txt
+│   ├── config/              settings（JWT/限流/CORS）、统一异常、路由
+│   │   ├── settings.py
+│   │   ├── exceptions.py
+│   │   └── urls.py
+│   ├── accounts/            注册/登录/me/登出 + LoginAttempt 锁定模型
+│   └── expenses/            开销 CRUD + 服务端导入解析（importers.py）
 ├── _bmad-output/
 │   ├── planning-artifacts/  BMAD 阶段一、二产物（需求/设计）
 │   └── implementation-artifacts/  BMAD 阶段三、四产物（迭代/报告）
@@ -97,7 +131,7 @@ WEILAI_BYSJ_X/
 
 ## Git 工作流记录
 
-本项目严格遵循 conventional commit 格式，每个功能或修复均建 feature 分支开发后 merge 回 main。截至本次文档同步，仓库共 **32 次提交**，其中 **11 次**为 merge 提交（本次文档同步分支为第 12 个 feature 分支）：
+本项目严格遵循 conventional commit 格式，每个功能或修复均建 feature 分支开发后 merge 回 main。截至后端认证迭代开始前，仓库共 **34 次提交**，其中 **12 次**为 merge 提交（本次后端认证分支为第 13 个 feature 分支）：
 
 ```
 384124e Merge branch 'feature/ui-redesign' into main
@@ -144,27 +178,31 @@ ef68659 Merge branch 'feature/data-management' into main
 | 迭代 · 缺陷修复 | `implementation-artifacts/iteration-9.md` | 图表白屏（时序 + 重复调用） | `cbada44` |
 | 迭代 · 缺陷修复 | `implementation-artifacts/iteration-10.md` | Promise 消除竞态 + 端口固定 | `9a7f96c` |
 | 迭代 · UI 规范 | `implementation-artifacts/iteration-11.md` | 去渐变/去重阴影/去 emoji + 设计令牌 | `3b0436b` |
-| 迭代 · 文档同步 | `implementation-artifacts/iteration-12.md` | README 与仓库现状对齐 | 本次提交 |
+| 迭代 · 文档同步 | `implementation-artifacts/iteration-12.md` | README 与仓库现状对齐 | `4a1f742` |
+| 迭代 · 后端认证 | `implementation-artifacts/iteration-13.md` | 认证迁移 Django：PBKDF2 + JWT + 限流 + 服务端导入 | 本次提交 |
 | 阶段四 · 验证改进 | `implementation-artifacts/build-report.md` | 构建报告（零构建说明） | `3df6fbc` |
-| 阶段四 · 验证改进 | `implementation-artifacts/test-report.md` | E2E 测试报告（22/22 PASS） | `9ce9cbb` |
+| 阶段四 · 验证改进 | `implementation-artifacts/test-report.md` | 测试报告（后端单测 + 联调） | `9ce9cbb` / 本次提交 |
 
-## 快速演示路径（< 30 秒）
+## 快速演示路径（< 1 分钟）
 
-1. 打开 `src/index.html`（或 `http://localhost:8080`）
-2. 首次使用先注册：账号 `demo` / 密码 `123456`，注册成功后切回登录页用该账号登录
+1. 启动后端 `python manage.py runserver 127.0.0.1:8000`，再启动前端 `python -m http.server 8080`（在 `src/` 下）
+2. 打开 `http://localhost:8080`，注册 `demo` / `secret123`，切回登录页登录（JWT 由后端签发）
 3. 在录入表单里依次输入 3 条数据：
    - `35 / 餐饮 / 今天 / 外卖`
    - `120 / 购物 / 今天 / 超市`
    - `8 / 交通 / 今天 / 地铁`
-4. 点击"添加"按钮（每条都会自动刷新所有图表）
+4. 点击"添加"按钮（后端落库，前端拉取后刷新所有图表）
 5. 查看环形图（餐饮/购物/交通各占比、中心 ¥163）、月度柱状图、堆叠图、折线图（今天的点）、卡片（总支出 ¥163.00，最高单笔 ¥120.00）
-6. 在"数据管理"区导出 CSV，再用"导入备份"选回该文件，验证数据完整恢复
+6. 数据管理区：导出 CSV → 清空 → 用"导入备份"上传该文件，验证后端校验后数据完整恢复
+7. 安全演示：连续输错 5 次密码 → 第 5 次即返回锁定（界面显示服务端倒计时）；同时刷新页面或换浏览器仍保持锁定
 
 ## 限制与未来方向
 
-- **认证为纯前端实现**：密码虽经 SHA-256 哈希，但账号与锁定状态保存在浏览器本地，仅适用于课程演示；生产环境需改为后端校验 + 加盐哈希 + JWT + 服务端限流
-- v1 明确不做：预算提醒、收入管理、跨设备同步、移动端 App
-- 未来可扩展：Vite 构建打包、PWA 离线安装、CSV 导入微信/支付宝账单
+- **认证已迁移到后端**：PBKDF2 加盐哈希 + JWT + 服务端锁定与限流；但 SQLite 与 LocMem 限流仅适合单进程演示，生产环境需 PostgreSQL + Redis，并通过环境变量注入 `DJANGO_SECRET_KEY`
+- **尚未实现**：PDF 文档导入与内容转写（原计划的功能 1 被中断），其接口落地后同样需走 JWT + 限流 + 服务端解析
+- 未实现邮箱验证、找回密码、多设备会话管理
+- v1 明确不做：预算提醒、收入管理、移动端 App
+- 未来可扩展：PDF/Word 表格导入、语音转写、PWA 离线安装
 
 ---
 

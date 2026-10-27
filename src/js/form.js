@@ -59,8 +59,8 @@
       return ok;
     },
 
-    /** 处理提交 */
-    handleSubmit() {
+    /** 处理提交（数据写入由后端完成，成功后才刷新视图） */
+    async handleSubmit() {
       if (!this.validate()) return;
 
       const expense = {
@@ -70,23 +70,21 @@
         note: (this.noteInput.value || '').trim(),
       };
 
+      this.submitBtn.disabled = true;
       try {
-        window.dataStore.add(expense);
+        await window.dataStore.add(expense);
         this.lastCategory = expense.category;
         this.resetForm();
 
-        // 统一刷新（由 renderer 协调；Epic 5 实现）
+        // 统一刷新（由 renderer 协调）
         if (window.renderer && typeof window.renderer.refreshAll === 'function') {
           window.renderer.refreshAll();
-        } else {
-          // Epic 2 暂时手动触发各模块的 refreshAll（占位兜底）
-          console.log('[form] expense added:', expense);
-          if (window.charts && typeof window.charts.refreshAll === 'function') window.charts.refreshAll();
-          if (window.cards && typeof window.cards.refreshAll === 'function') window.cards.refreshAll();
-          if (window.listView && typeof window.listView.refreshAll === 'function') window.listView.refreshAll();
         }
       } catch (err) {
         alert('保存失败：' + err.message);
+        if (err.status === 401 && window.auth) window.auth.logout();
+      } finally {
+        this.validate();
       }
     },
 

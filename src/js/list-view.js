@@ -100,21 +100,22 @@
       `;
     },
 
-    /** 处理删除 */
-    handleDelete(id) {
+    /** 处理删除（后端删除成功后刷新视图） */
+    async handleDelete(id) {
       if (!confirm('确定删除这笔开销吗？此操作不可撤销。')) return;
 
-      global.dataStore.delete(id);
+      try {
+        await global.dataStore.delete(id);
+      } catch (err) {
+        alert('删除失败：' + err.message);
+        if (err.status === 401 && global.auth) global.auth.logout();
+        return;
+      }
 
       // 统一刷新
       const filter = this.filterSelect ? this.filterSelect.value : '';
       if (global.renderer && typeof global.renderer.refreshAll === 'function') {
         global.renderer.refreshAll(filter);
-      } else {
-        // 兜底
-        global.charts.refreshAll(filter);
-        global.cards.refreshAll();
-        this.refreshAll(filter);
       }
     },
   };

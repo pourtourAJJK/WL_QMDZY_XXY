@@ -135,8 +135,8 @@ REST_FRAMEWORK = {
     "DEFAULT_THROTTLE_RATES": {
         "anon": "30/min",
         "user": "120/min",
-        "login": "10/min",       # 单 IP 每分钟最多 10 次登录尝试
-        "register": "5/hour",    # 单 IP 每小时最多注册 5 个账号
+        "login": "20/min",       # 单 IP 每分钟最多 20 次登录尝试
+        "register": "50/hour",   # 单 IP 每小时最多注册 50 个账号
         "import": "10/hour",     # 单用户每小时最多导入 10 次
         "export": "30/hour",     # 单用户每小时最多导出 30 次
     },

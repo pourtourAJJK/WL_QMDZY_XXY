@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>个人开销统计仪表盘</title>
-  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/style.css?v=20261027">
 </head>
 <body>
   <!-- ============== 登录/注册视图 ============== -->
@@ -177,7 +177,7 @@
         </div>
         <label class="btn btn-outline">
           导入备份
-          <input type="file" id="import-file" accept=".json,.csv,.xlsx" hidden>
+          <input type="file" id="import-file" accept=".json,.csv,.xlsx,.xls" hidden>
         </label>
         <button id="clear-btn" class="btn btn-danger">清空所有数据</button>
       </div>
@@ -188,16 +188,16 @@
   <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
   <script>if (typeof echarts === 'undefined') { document.write('<script src="https://cdn.bootcdn.net/ajax/libs/echarts/5.5.0/echarts.min.js"><\\/script>'); }</script>
 
-  <!-- 业务 JS 模块（严格按依赖顺序加载） -->
-  <script src="js/api.js"></script>
-  <script src="js/auth.js"></script>
-  <script src="js/categories.js"></script>
-  <script src="js/data-store.js"></script>
-  <script src="js/charts.js"></script>
-  <script src="js/cards.js"></script>
-  <script src="js/list-view.js"></script>
-  <script src="js/form.js"></script>
-  <script src="js/renderer.js"></script>
-  <script src="js/main.js"></script>
+  <!-- 业务 JS 模块（严格按依赖顺序加载；?v= 防止浏览器沿用旧缓存代码） -->
+  <script src="js/api.js?v=20261027"></script>
+  <script src="js/auth.js?v=20261027"></script>
+  <script src="js/categories.js?v=20261027"></script>
+  <script src="js/data-store.js?v=20261027"></script>
+  <script src="js/charts.js?v=20261027"></script>
+  <script src="js/cards.js?v=20261027"></script>
+  <script src="js/list-view.js?v=20261027"></script>
+  <script src="js/form.js?v=20261027"></script>
+  <script src="js/renderer.js?v=20261027"></script>
+  <script src="js/main.js?v=20261027"></script>
 </body>
 </html>

@@ -1,39 +1,30 @@
 /**
- * main.js — 应用入口
- * Feature: feature/auth-login（新增 auth 路由守卫）
- * 登录流程：auth.init() → 未登录显示登录页 → 登录成功触发 onAuthReady → 初始化业务模块
+ * main.js — 应用入口（后端鉴权版）
+ * 流程：auth.init() → 校验 JWT 会话 → 登录后 onAuthReady → 从后端拉取数据 → 初始化业务模块
  */
 (function (global) {
   'use strict';
 
-  // ============ 路由守卫回调（auth.js 登录成功后调用） ============
-  let _businessModulesInited = false; // 防止 initBusinessModules 被调两次
+  let businessModulesInited = false;
 
-  global.onAuthReady = () => {
-    if (_businessModulesInited) {
+  // 认证通过后由 auth.showDashboard() 触发
+  global.onAuthReady = async () => {
+    if (businessModulesInited) {
       console.warn('[main] business modules already initialized, skipping');
       return;
     }
-    _businessModulesInited = true;
+    businessModulesInited = true;
 
     console.log('[main] Auth ready — initializing business modules...');
 
-    // 更新 header 显示当前用户名
     const userEl = document.getElementById('current-user');
-    if (userEl) {
-      const name = global.auth.getCurrentUser() || '游客';
-      userEl.textContent = '👤 ' + name;
-    }
+    if (userEl) userEl.textContent = global.auth.getCurrentUser() || '游客';
 
-    initBusinessModules();
+    await initBusinessModules();
   };
 
   document.addEventListener('DOMContentLoaded', () => {
     console.log('[main] DOM ready — init auth first...');
-
-    // === 0. 先初始化认证模块（决定显示登录页还是仪表盘） ===
-    // auth.init() 内部会根据登录态自动调用 showLogin() 或 showDashboard()
-    // showDashboard() 会触发 global.onAuthReady()（仅一次）
     if (global.auth && typeof global.auth.init === 'function') {
       global.auth.init();
     } else {
@@ -41,46 +32,56 @@
     }
   });
 
-  // ============ 业务模块初始化（登录后才执行） ============
-  // 改为 async，因为 charts.init() 返回 Promise 需要 await
+  // ============ 业务模块初始化 ============
 
   async function initBusinessModules() {
     try {
-      // === 1. 初始化 ECharts 实例 + await 彻底消除时序竞态 ===
+      // 1. 先取回当前用户数据（唯一事实源在后端）
+      try {
+        await global.dataStore.load();
+        console.log('[main] expenses loaded:', global.dataStore.getAll().length);
+      } catch (err) {
+        console.error('[main] dataStore.load failed:', err);
+        if (err.status === 401) {
+          alert('登录已过期，请重新登录');
+          global.auth.logout();
+          return;
+        }
+      }
+
+      // 2. ECharts 实例（await 消除时序竞态）
       if (global.charts && typeof global.charts.init === 'function') {
         try {
-          await global.charts.init();  // ✅ 等 Promise resolve 后 instances 一定就绪
-          console.log('[main] ECharts instances created ✅');
+          await global.charts.init();
+          console.log('[main] ECharts instances created');
         } catch (e) {
           console.error('[main] charts.init failed:', e);
         }
       }
 
-      // === 2. 初始化录入表单 ===
+      // 3. 录入表单
       if (global.form && typeof global.form.init === 'function') {
         global.form.init();
-        console.log('[main] form initialized');
       }
 
-      // === 3. 初始化列表视图 ===
+      // 4. 列表视图
       if (global.listView && typeof global.listView.init === 'function') {
         global.listView.init();
-        console.log('[main] listView initialized');
       }
 
-      // === 4. 绑定数据管理按钮 ===
+      // 5. 数据管理按钮
       bindDataManagement();
 
-      // === 5. 首次全量刷新（此时 charts.instances 一定已就绪） ===
+      // 6. 首次全量刷新
       global.renderer.refreshAll();
 
-      console.log('[main] App ready ✅');
+      console.log('[main] App ready');
     } catch (err) {
       console.error('[main] initBusinessModules failed:', err);
     }
   }
 
-  // ============ 数据管理按钮事件 ============
+  // ============ 数据管理 ============
 
   function bindDataManagement() {
     const dropdownToggle = document.getElementById('export-dropdown');
@@ -88,29 +89,23 @@
     const importFile = document.getElementById('import-file');
     const clearBtn = document.getElementById('clear-btn');
 
-    // === 导出下拉菜单 ===
+    // 导出下拉菜单
     if (dropdownToggle && exportMenu) {
-      // 点击 toggle 开关下拉
       dropdownToggle.addEventListener('click', (e) => {
         e.stopPropagation();
         exportMenu.classList.toggle('show');
       });
-      // 点击菜单项触发对应导出
       exportMenu.querySelectorAll('.dropdown-item').forEach((item) => {
         item.addEventListener('click', (e) => {
           e.stopPropagation();
-          const fmt = item.dataset.format;
           exportMenu.classList.remove('show');
-          doExport(fmt);
+          doExport(item.dataset.format);
         });
       });
-      // 点击页面其他地方关闭下拉
-      document.addEventListener('click', () => {
-        exportMenu.classList.remove('show');
-      });
+      document.addEventListener('click', () => exportMenu.classList.remove('show'));
     }
 
-    // === 导入：按扩展名分派解析 ===
+    // 导入：文件直接上传后端解析与校验（后端按用户隔离并覆盖写入）
     if (importFile) {
       importFile.addEventListener('change', async (e) => {
         const file = e.target.files && e.target.files[0];
@@ -122,33 +117,37 @@
         }
 
         try {
-          const ext = file.name.split('.').pop().toLowerCase();
-          const count = await doImport(file, ext);
-          alert(`导入成功！共恢复 ${count} 条记录。`);
+          const count = await global.dataStore.importFile(file);
+          alert(`导入成功！后端已校验并恢复 ${count} 条记录。`);
           global.renderer.refreshAll();
-          console.log('[main] Imported:', count, 'records (', ext, ')');
         } catch (err) {
           alert('导入失败：' + err.message);
+          if (err.status === 401) global.auth.logout();
         } finally {
           e.target.value = '';
         }
       });
     }
 
-    // === 清空 ===
+    // 清空
     if (clearBtn) {
-      clearBtn.addEventListener('click', () => {
-        if (!confirm('⚠️ 确定要清空所有开销数据吗？此操作不可撤销！')) return;
-        if (!confirm('⚠️ 再次确认：真的要清空吗？')) return;
+      clearBtn.addEventListener('click', async () => {
+        if (!confirm('确定要清空所有开销数据吗？此操作不可撤销！')) return;
+        if (!confirm('再次确认：真的要清空吗？')) return;
 
-        global.dataStore.clear();
-        global.renderer.refreshAll();
-        console.log('[main] All data cleared');
+        try {
+          await global.dataStore.clear();
+          global.renderer.refreshAll();
+          console.log('[main] All data cleared (server side)');
+        } catch (err) {
+          alert('清空失败：' + err.message);
+          if (err.status === 401) global.auth.logout();
+        }
       });
     }
   }
 
-  // ============ 多格式导出 ============
+  // ============ 导出（基于后端快照在本地生成文件） ============
 
   function doExport(format) {
     const now = new Date();
@@ -179,42 +178,11 @@
         );
       } else {
         alert('未知导出格式：' + format);
-        return;
       }
-      console.log('[main] Exported format:', format);
     } catch (e) {
       alert('导出失败：' + e.message);
     }
   }
-
-  // ============ 多格式导入 ============
-
-  async function doImport(file, ext) {
-    const exts = ['json', 'csv', 'xlsx', 'xls'];
-    if (!exts.includes(ext)) {
-      throw new Error(`不支持的文件格式 ".${ext}"，请选择 .json / .csv / .xlsx / .xls`);
-    }
-
-    if (ext === 'json') {
-      const text = await file.text();
-      return global.dataStore.importJSON(text);
-    }
-
-    if (ext === 'csv') {
-      const text = await file.text();
-      return global.dataStore.importCSV(text);
-    }
-
-    if (ext === 'xlsx' || ext === 'xls') {
-      if (!global.XLSX) {
-        throw new Error('Excel 导入需要 SheetJS 库，但当前未加载。请检查网络后刷新页面。');
-      }
-      const arrayBuffer = await file.arrayBuffer();
-      return global.dataStore.importExcel(arrayBuffer);
-    }
-  }
-
-  // ============ 下载辅助 ============
 
   function triggerDownload(blob, filename) {
     const url = URL.createObjectURL(blob);
@@ -224,7 +192,6 @@
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    // 延迟释放 URL（部分浏览器需要）
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 })(window);

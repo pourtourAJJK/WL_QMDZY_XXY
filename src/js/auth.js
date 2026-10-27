@@ -1,42 +1,49 @@
 /**
- * auth.js — 前端 mock 认证模块（注册/登录/锁定/登出/路由守卫）
- * Feature: feature/auth-login
- * 安全约束：
- *   1. 密码用 Web Crypto SHA-256 哈希存 localStorage，不明文保存
- *   2. 锁定状态持久化（localStorage），防止刷新绕过
- *   3. 登录态用 sessionStorage（关闭浏览器即退出，比 localStorage 更安全）
+ * auth.js — 后端认证模块（注册 / 登录 / JWT 会话 / 登出 / 路由守卫）
+ *
+ * 与旧版差异：
+ *   1. 不再读写 localStorage 账号与锁定状态，全部逻辑由 Django 后端承担；
+ *   2. 密码只提交给后端，前端不做 SHA-256，不落任何密码派生值；
+ *   3. 会话凭 JWT（access 30min / refresh 1d），令牌存 sessionStorage；
+ *   4. 连续失败 5 次锁定 5 分钟由服务端判定，前端仅展示 retry_after 倒计时。
  */
 (function (global) {
   'use strict';
 
-  // ============ storage keys ============
-  const ACCOUNTS_KEY = 'auth_accounts';           // { username: { passwordHash, createdAt } }
-  const LOCK_KEY = 'auth_lock';                   // { username, failedAttempts, lockedUntil }
-  const SESSION_KEY = 'auth_session';             // { token, username, createdAt }
-
-  const MAX_FAILED_ATTEMPTS = 5;
-  const LOCK_DURATION_MS = 5 * 60 * 1000;         // 5 分钟
-
-  // ============ public API ============
+  const LEGACY_ACCOUNTS_KEY = 'auth_accounts';
+  const LEGACY_LOCK_PREFIX = 'auth_lock';
 
   const auth = {
-    /** 初始化：绑定 DOM 事件、恢复登录态、路由守卫 */
-    init() {
-      // 绑定登录/注册按钮
+    /** 初始化：清理旧版本地数据 → 绑定 DOM → 路由守卫 */
+    async init() {
+      this.purgeLegacyLocalAuth();
       this.bindLoginForm();
       this.bindRegisterForm();
       this.bindLogout();
 
-      // 路由守卫：根据登录态切换视图
-      if (this.isLoggedIn()) {
+      window.addEventListener('hashchange', () => this.route());
+
+      const restored = await this.restoreSession();
+      if (restored) {
         this.showDashboard();
       } else {
         this.showLogin();
       }
+      console.log('[auth] initialized (backend mode)');
+    },
 
-      // 监听 hash 变化支持简单路由
-      window.addEventListener('hashchange', () => this.route());
-      console.log('[auth] initialized');
+    /** 用现有 access 向后端校验会话是否仍然有效 */
+    async restoreSession() {
+      if (!this.isLoggedIn()) return false;
+      try {
+        const me = await global.api.request('/api/auth/me/');
+        const tokens = global.api.getTokens();
+        global.api.setTokens({ ...tokens, username: me.username });
+        return true;
+      } catch (e) {
+        global.api.setTokens(null);
+        return false;
+      }
     },
 
     /** 路由守卫：hash 变化时检查登录态 */
@@ -51,120 +58,85 @@
       }
     },
 
-    /** 注册新账户 */
+    /** 注册：仅提交账号密码，哈希与存储全在后端 */
     async register(username, password) {
       username = (username || '').trim();
-      password = (password || '').trim();
+      password = password || '';
 
       if (!username || !password) return { ok: false, reason: '账号和密码不能为空' };
       if (username.length < 3) return { ok: false, reason: '账号至少 3 位' };
       if (password.length < 6) return { ok: false, reason: '密码至少 6 位' };
-      if (this.isLocked(username)) return { ok: false, reason: `该账号已被锁定，请${this.getLockRemaining(username)}后重试` };
-      if (this.accountExists(username)) return { ok: false, reason: '该账号已存在' };
 
-      const passwordHash = await this.sha256(password);
-      const accounts = this.loadAccounts();
-      accounts[username] = { passwordHash, createdAt: Date.now() };
-      this.saveAccounts(accounts);
-
-      console.log('[auth] registered:', username);
-      return { ok: true };
+      try {
+        await global.api.request('/api/auth/register/', {
+          method: 'POST',
+          body: { username, password },
+          auth: false,
+        });
+        return { ok: true };
+      } catch (err) {
+        return { ok: false, reason: this.describeError(err) };
+      }
     },
 
-    /** 登录 */
+    /** 登录：成功后保存 JWT，失败时展示服务端返回的剩余次数/锁定倒计时 */
     async login(username, password) {
       username = (username || '').trim();
-      password = (password || '').trim();
-
+      password = password || '';
       if (!username || !password) return { ok: false, reason: '请输入账号和密码' };
 
-      // 1. 检查锁定状态
-      if (this.isLocked(username)) {
-        const remaining = this.getLockRemaining(username);
-        return { ok: false, reason: `该账号已被锁定，请${remaining}后重试` };
+      try {
+        const data = await global.api.request('/api/auth/login/', {
+          method: 'POST',
+          body: { username, password },
+          auth: false,
+        });
+        global.api.setTokens({
+          access: data.access,
+          refresh: data.refresh,
+          username: data.username,
+        });
+        console.log('[auth] logged in:', data.username);
+        return { ok: true, username: data.username };
+      } catch (err) {
+        return {
+          ok: false,
+          reason: this.describeError(err),
+          retryAfter: err.data && err.data.retry_after,
+          remaining: err.data && err.data.remaining_attempts,
+        };
       }
-
-      // 2. 检查账户是否存在
-      if (!this.accountExists(username)) {
-        this.recordFailedAttempt(username);
-        return { ok: false, reason: '账号或密码错误' };
-      }
-
-      // 3. 校验密码（哈希对比）
-      const accounts = this.loadAccounts();
-      const inputHash = await this.sha256(password);
-      if (inputHash !== accounts[username].passwordHash) {
-        const state = this.recordFailedAttempt(username);
-        const remaining = this.getLockRemaining(username);
-        if (state.locked) {
-          return { ok: false, reason: `密码错误次数过多，账号已被锁定，请${remaining}后重试` };
-        } else {
-          const left = MAX_FAILED_ATTEMPTS - state.failedAttempts;
-          return { ok: false, reason: `账号或密码错误，还剩 ${left} 次尝试机会` };
-        }
-      }
-
-      // 4. 登录成功：清除失败记录，创建 session
-      this.clearFailedAttempts(username);
-      const token = this.generateToken();
-      sessionStorage.setItem(SESSION_KEY, JSON.stringify({
-        token,
-        username,
-        createdAt: Date.now(),
-      }));
-
-      console.log('[auth] logged in:', username);
-      return { ok: true, username };
     },
 
-    /** 登出 */
-    logout() {
-      sessionStorage.removeItem(SESSION_KEY);
+    /** 登出：通知后端拉黑 refresh，再清本地令牌 */
+    async logout() {
+      const tokens = global.api.getTokens();
+      if (tokens && tokens.refresh) {
+        try {
+          await global.api.request('/api/auth/logout/', {
+            method: 'POST',
+            body: { refresh: tokens.refresh },
+          });
+        } catch (e) {
+          console.warn('[auth] logout request failed, token discarded locally:', e.message);
+        }
+      }
+      global.api.setTokens(null);
       window.location.hash = '#login';
       this.showLogin();
       console.log('[auth] logged out');
     },
 
-    /** 是否已登录（只检查 sessionStorage 里是否有 token） */
+    /** 是否持有未过期的会话凭据（真实有效性由 restoreSession 向后端确认） */
     isLoggedIn() {
-      try {
-        const raw = sessionStorage.getItem(SESSION_KEY);
-        if (!raw) return false;
-        const session = JSON.parse(raw);
-        return !!session.token && !!session.username;
-      } catch (e) {
-        return false;
-      }
+      const tokens = global.api.getTokens();
+      return !!(tokens && tokens.access && tokens.refresh);
     },
 
-    /** 获取当前登录用户名 */
+    /** 当前用户名（来自后端登录响应，不来自本地账号表） */
     getCurrentUser() {
-      try {
-        const raw = sessionStorage.getItem(SESSION_KEY);
-        return raw ? JSON.parse(raw).username : null;
-      } catch (e) {
-        return null;
-      }
-    },
-
-    /** 锁定状态检查 */
-    isLocked(username) {
-      const state = this.loadLockState(username);
-      if (!state) return false;
-      if (state.lockedUntil > Date.now()) return true;
-      // 锁定期过了，清除状态
-      this.clearLockState(username);
-      return false;
-    },
-
-    /** 获取锁定剩余时间（"X 分钟" / "X 秒" 格式） */
-    getLockRemaining(username) {
-      const state = this.loadLockState(username);
-      if (!state || state.lockedUntil <= Date.now()) return '';
-      const ms = state.lockedUntil - Date.now();
-      const seconds = Math.ceil(ms / 1000);
-      if (seconds >= 60) return `${Math.ceil(seconds / 60)} 分钟`;
-      return `${seconds} 秒`;
+      const tokens = global.api.getTokens();
+      return tokens && tokens.username ? tokens.username : null;
     },
 
     // ============ DOM 切换 ============
@@ -185,7 +157,6 @@
       if (loginView) loginView.style.display = 'none';
       if (dashboard) dashboard.style.display = 'block';
       window.location.hash = '#dashboard';
-      // 触发 main.js 的初始化
       if (global.onAuthReady) global.onAuthReady();
     },
 
@@ -205,31 +176,22 @@
         msg.textContent = '';
         msg.className = 'auth-message';
         lockInfo.style.display = 'none';
+        form.querySelector('button[type="submit"]').disabled = true;
 
         const result = await this.login(usernameInput.value, passwordInput.value);
+        form.querySelector('button[type="submit"]').disabled = false;
+
         if (!result.ok) {
           msg.textContent = result.reason;
           msg.classList.add('error');
-          // 显示锁定倒计时
-          if (result.reason.includes('锁定')) {
+          if (result.retryAfter) {
             lockInfo.style.display = 'block';
-            this.startCountdown(usernameInput.value.trim());
+            this.startCountdown(Number(result.retryAfter));
           }
         } else {
           msg.textContent = '登录成功！';
           msg.classList.add('success');
           setTimeout(() => this.showDashboard(), 300);
-        }
-      });
-
-      // 锁定状态实时检查
-      usernameInput?.addEventListener('blur', () => {
-        const u = usernameInput.value.trim();
-        if (u && this.isLocked(u)) {
-          lockInfo.style.display = 'block';
-          this.startCountdown(u);
-        } else {
-          lockInfo.style.display = 'none';
         }
       });
     },
@@ -257,14 +219,16 @@
           return;
         }
 
+        form.querySelector('button[type="submit"]').disabled = true;
         const result = await this.register(username, password);
+        form.querySelector('button[type="submit"]').disabled = false;
+
         if (!result.ok) {
           msg.textContent = result.reason;
           msg.classList.add('error');
         } else {
           msg.textContent = '注册成功！请去登录';
           msg.classList.add('success');
-          // 3 秒后切回登录表单
           setTimeout(() => {
             document.getElementById('login-username').value = username;
             switchTab('login-tab');
@@ -272,7 +236,6 @@
         }
       });
 
-      // tab 切换
       switchLink?.addEventListener('click', () => switchTab('register-tab'));
       backLink?.addEventListener('click', () => switchTab('login-tab'));
     },
@@ -282,104 +245,62 @@
       if (btn) btn.addEventListener('click', () => this.logout());
     },
 
-    startCountdown(username) {
+    /** 服务端锁定倒计时（仅展示，锁定事实以后端为准） */
+    startCountdown(seconds) {
       const lockInfo = document.getElementById('login-lock-info');
-      if (!lockInfo) return;
+      if (!lockInfo || !seconds) return;
 
-      const state = this.loadLockState(username);
-      if (!state || state.lockedUntil <= Date.now()) {
-        lockInfo.style.display = 'none';
-        return;
-      }
-
-      const update = () => {
-        const remaining = state.lockedUntil - Date.now();
+      let remaining = seconds;
+      const render = () => {
         if (remaining <= 0) {
           lockInfo.style.display = 'none';
           return;
         }
-        const minutes = Math.floor(remaining / 60000);
-        const seconds = Math.floor((remaining % 60000) / 1000);
-        lockInfo.innerHTML = `🔒 账号已锁定，剩余 <strong>${minutes}分${seconds}秒</strong>`;
+        const minutes = Math.floor(remaining / 60);
+        const secs = remaining % 60;
+        lockInfo.textContent = `账号已被服务端锁定，剩余 ${minutes} 分 ${secs} 秒`;
       };
-      update();
+      render();
       const timer = setInterval(() => {
-        if (lockInfo.style.display === 'none') clearInterval(timer);
-        else update();
+        remaining -= 1;
+        if (remaining <= 0 || lockInfo.style.display === 'none') {
+          clearInterval(timer);
+          lockInfo.style.display = 'none';
+          return;
+        }
+        render();
       }, 1000);
     },
 
-    // ============ 内部：账户/锁定持久化 ============
+    /** 把后端错误翻译成可读文案 */
+    describeError(err) {
+      if (!err) return '未知错误';
+      if (err.status === 429) return '操作过于频繁，请稍后再试';
+      if (err.status === 423) return '账号已锁定，请稍后重试';
+      if (err.status === 0) return err.message;
+      const data = err.data || {};
+      if (data.errors && typeof data.errors === 'object') {
+        const first = Object.values(data.errors)[0];
+        if (Array.isArray(first) && first.length) return String(first[0]);
+        if (typeof first === 'string') return first;
+      }
+      return err.message || '请求失败';
+    },
 
-    loadAccounts() {
+    /** 清理旧版本遗留在 localStorage 的账号表与锁定状态 */
+    purgeLegacyLocalAuth() {
       try {
-        return JSON.parse(localStorage.getItem(ACCOUNTS_KEY) || '{}');
+        localStorage.removeItem(LEGACY_ACCOUNTS_KEY);
+        Object.keys(localStorage)
+          .filter((key) => key.startsWith(LEGACY_LOCK_PREFIX))
+          .forEach((key) => localStorage.removeItem(key));
       } catch (e) {
-        return {};
+        console.warn('[auth] legacy local auth cleanup failed:', e);
       }
-    },
-
-    saveAccounts(accounts) {
-      localStorage.setItem(ACCOUNTS_KEY, JSON.stringify(accounts));
-    },
-
-    accountExists(username) {
-      const accounts = this.loadAccounts();
-      return !!accounts[username];
-    },
-
-    recordFailedAttempt(username) {
-      let state = this.loadLockState(username) || { failedAttempts: 0, lockedUntil: 0 };
-      state.failedAttempts += 1;
-      let locked = false;
-      if (state.failedAttempts >= MAX_FAILED_ATTEMPTS) {
-        state.lockedUntil = Date.now() + LOCK_DURATION_MS;
-        locked = true;
-      }
-      localStorage.setItem(LOCK_KEY + ':' + username, JSON.stringify(state));
-      return { ...state, locked };
-    },
-
-    clearFailedAttempts(username) {
-      localStorage.removeItem(LOCK_KEY + ':' + username);
-    },
-
-    loadLockState(username) {
-      try {
-        const raw = localStorage.getItem(LOCK_KEY + ':' + username);
-        return raw ? JSON.parse(raw) : null;
-      } catch (e) {
-        return null;
-      }
-    },
-
-    clearLockState(username) {
-      localStorage.removeItem(LOCK_KEY + ':' + username);
-    },
-
-    // ============ 内部：工具函数 ============
-
-    /** Web Crypto SHA-256 哈希 */
-    async sha256(str) {
-      const encoder = new TextEncoder();
-      const data = encoder.encode(str);
-      const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-      const hashArray = Array.from(new Uint8Array(hashBuffer));
-      return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
-    },
-
-    /** 生成随机 token（基础安全） */
-    generateToken() {
-      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-      let token = '';
-      for (let i = 0; i < 32; i++) {
-        token += chars.charAt(Math.floor(Math.random() * chars.length));
-      }
-      return token + '_' + Date.now();
     },
   };
 
-  // ============ 内部：tab 切换 ============
+  // ============ tab 切换 ============
 
   function switchTab(tabId) {
     const loginTab = document.getElementById('login-tab');
@@ -407,7 +328,6 @@
     }
   }
 
-  // 暴露到 window
   global.auth = auth;
   global.switchAuthTab = switchTab;
 })(window);

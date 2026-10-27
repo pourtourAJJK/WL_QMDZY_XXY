@@ -1,57 +1,81 @@
 /**
- * data-store.js — localStorage 数据层（开销 CRUD + JSON 导入导出）
- * Epic 1, Story 1.2
+ * data-store.js — 后端数据层（JWT 鉴权 + 内存缓存 + 三格式导出）
+ *
+ * 与旧版差异：
+ *   1. 数据唯一事实源在 Django + SQLite，浏览器不再保存开销数据；
+ *   2. 增删改与导入全部走后端接口，后端按 user 隔离并逐行校验；
+ *   3. getAll() 保持同步，读取最近一次 load() 的内存快照，避免改动图表/卡片渲染逻辑。
  */
 (function (global) {
   'use strict';
 
-  const STORAGE_KEY = 'expense_dashboard_data';
   const SCHEMA_VERSION = 1;
-
-  // ========== 公开 API ==========
+  let cache = [];
 
   const dataStore = {
-    /** 读取全部开销记录（数组，按日期倒序） */
-    getAll() {
-      try {
-        const raw = localStorage.getItem(STORAGE_KEY);
-        if (!raw) return [];
-        const parsed = JSON.parse(raw);
-        return parsed.expenses || [];
-      } catch (e) {
-        console.warn('dataStore.getAll failed:', e);
-        return [];
-      }
+    /** 从后端拉取当前用户的全部开销，刷新内存快照 */
+    async load() {
+      const data = await global.api.request('/api/expenses/');
+      cache = Array.isArray(data) ? data : [];
+      return cache;
     },
 
-    /** 添加一条开销 */
-    add(expense) {
+    /** 读取内存快照（同步，供图表/卡片/列表渲染） */
+    getAll() {
+      return cache.slice();
+    },
+
+    /** 新增一条开销（后端落库后返回完整记录） */
+    async add(expense) {
       if (!expense || !expense.amount || !expense.category || !expense.date) {
         throw new Error('Invalid expense: missing required fields');
       }
-      const list = this.getAll();
-      const newItem = {
-        id: expense.id || generateId(),
-        amount: Number(expense.amount),
-        category: expense.category,
-        date: expense.date,
-        note: expense.note || '',
-        created_at: new Date().toISOString(),
-      };
-      list.push(newItem);
-      save(list);
-      return newItem;
+      const created = await global.api.request('/api/expenses/', {
+        method: 'POST',
+        body: {
+          amount: Number(expense.amount),
+          category: expense.category,
+          date: expense.date,
+          note: expense.note || '',
+        },
+      });
+      cache.push(created);
+      return created;
     },
 
     /** 删除一条开销 */
-    delete(id) {
-      const list = this.getAll();
-      const next = list.filter((item) => item.id !== id);
-      save(next);
-      return next.length !== list.length;
+    async delete(id) {
+      await global.api.request('/api/expenses/' + encodeURIComponent(id) + '/', {
+        method: 'DELETE',
+      });
+      const before = cache.length;
+      cache = cache.filter((item) => String(item.id) !== String(id));
+      return cache.length !== before;
     },
 
-    // ============ 导出 ============
+    /** 清空当前用户全部数据 */
+    async clear() {
+      await global.api.request('/api/expenses/clear/', { method: 'DELETE' });
+      cache = [];
+    },
+
+    /**
+     * 导入文件：上传到后端解析与校验（JSON / CSV / XLSX），成功后重新拉取快照
+     * @param {File} file
+     * @returns {Promise<number>} 导入条数
+     */
+    async importFile(file) {
+      const formData = new FormData();
+      formData.append('file', file, file.name);
+      const result = await global.api.request('/api/expenses/import/', {
+        method: 'POST',
+        body: formData,
+      });
+      await this.load();
+      return result.imported;
+    },
+
+    // ============ 导出（基于后端快照，纯本地生成文件） ============
 
     /** 导出为 JSON 字符串 */
     exportJSON() {
@@ -74,7 +98,6 @@
       const rows = expenses.map((e) =>
         headers.map((h) => escapeCSVField(e[h] ?? '')).join(',')
       );
-      // 加 UTF-8 BOM，保证 Excel 打开中文不乱码
       return '\ufeff' + [headerLine, ...rows].join('\r\n');
     },
 
@@ -84,7 +107,6 @@
         throw new Error('Excel 导出需要 SheetJS 库加载，请刷新页面或检查网络');
       }
       const expenses = this.getAll();
-      // 行数据（header + data）
       const aoa = [
         ['ID', '日期', '类别', '金额', '备注', '创建时间'],
         ...expenses.map((e) => [
@@ -97,55 +119,13 @@
         ]),
       ];
       const ws = global.XLSX.utils.aoa_to_sheet(aoa);
-      // 列宽
       ws['!cols'] = [
-        { wch: 18 }, { wch: 12 }, { wch: 10 },
+        { wch: 38 }, { wch: 12 }, { wch: 10 },
         { wch: 10 }, { wch: 20 }, { wch: 20 },
       ];
       const wb = global.XLSX.utils.book_new();
       global.XLSX.utils.book_append_sheet(wb, ws, '开销记录');
       return global.XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-    },
-
-    // ============ 导入 ============
-
-    /** 从 JSON 字符串导入（覆盖） */
-    importJSON(jsonStr) {
-      const data = JSON.parse(jsonStr);
-      const list = extractExpenses(data);
-      save(list);
-      return list.length;
-    },
-
-    /** 从 CSV 字符串导入（覆盖） */
-    importCSV(csvStr) {
-      const rows = parseCSV(csvStr);
-      if (rows.length < 2) throw new Error('CSV 文件为空或只有表头');
-      // 第一行是表头，跳过
-      const expenses = rows.slice(1).map((cols) => csvRowToExpense(cols)).filter(Boolean);
-      validateExpenses(expenses);
-      save(expenses);
-      return expenses.length;
-    },
-
-    /** 从 Excel ArrayBuffer 导入（覆盖） */
-    importExcel(arrayBuffer) {
-      if (!global.XLSX) {
-        throw new Error('Excel 导入需要 SheetJS 库加载，请刷新页面或检查网络');
-      }
-      const wb = global.XLSX.read(arrayBuffer, { type: 'array' });
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      const aoa = global.XLSX.utils.sheet_to_json(ws, { header: 1 });
-      if (aoa.length < 2) throw new Error('Excel 文件为空或只有表头');
-      const expenses = aoa.slice(1).map((row) => excelRowToExpense(row)).filter(Boolean);
-      validateExpenses(expenses);
-      save(expenses);
-      return expenses.length;
-    },
-
-    /** 清空全部数据 */
-    clear() {
-      save([]);
     },
 
     /** schema_version 常量 */
@@ -154,45 +134,6 @@
     },
   };
 
-  // ========== 内部 ==========
-
-  function save(list) {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ expenses: list }));
-    } catch (e) {
-      console.warn('dataStore.save failed:', e);
-      throw new Error('无法保存数据，请检查浏览器存储权限');
-    }
-  }
-
-  function generateId() {
-    return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-  }
-
-  // ============ 多格式辅助函数 ============
-
-  /** 从 JSON 结构里提取 expenses 数组（兼容带 schema_version 和直接数组两种格式） */
-  function extractExpenses(data) {
-    if (Array.isArray(data)) {
-      validateExpenses(data);
-      return data;
-    }
-    if (data && Array.isArray(data.expenses)) {
-      validateExpenses(data.expenses);
-      return data.expenses;
-    }
-    throw new Error('Invalid data format: missing expenses array');
-  }
-
-  /** 校验 expense 记录的必要字段 */
-  function validateExpenses(list) {
-    for (const exp of list) {
-      if (typeof exp.amount !== 'number' || !exp.category || !exp.date) {
-        throw new Error('Invalid expense record: amount/category/date required');
-      }
-    }
-  }
-
   /** CSV 字段转义：含逗号/引号/换行时用引号包裹，内部引号翻倍 */
   function escapeCSVField(value) {
     const str = String(value ?? '');
@@ -200,75 +141,6 @@
       return '"' + str.replace(/"/g, '""') + '"';
     }
     return str;
-  }
-
-  /** 原生 CSV 解析器（支持引号包裹、字段内逗号和换行） */
-  function parseCSV(text) {
-    // 去掉 UTF-8 BOM
-    if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
-
-    const rows = [];
-    let currentRow = [];
-    let currentField = '';
-    let inQuotes = false;
-
-    for (let i = 0; i < text.length; i++) {
-      const ch = text[i];
-      if (inQuotes) {
-        if (ch === '"') {
-          if (text[i + 1] === '"') { currentField += '"'; i++; } // 双引号转义
-          else inQuotes = false;
-        } else {
-          currentField += ch;
-        }
-      } else {
-        if (ch === '"') inQuotes = true;
-        else if (ch === ',') { currentRow.push(currentField); currentField = ''; }
-        else if (ch === '\r') { /* skip, \n follows */ }
-        else if (ch === '\n') {
-          currentRow.push(currentField); currentField = '';
-          rows.push(currentRow); currentRow = [];
-        } else { currentField += ch; }
-      }
-    }
-    // 最后一行（可能没有 \n 结尾）
-    if (currentField !== '' || currentRow.length > 0) {
-      currentRow.push(currentField);
-      rows.push(currentRow);
-    }
-    return rows.filter((r) => r.length > 1 || (r.length === 1 && r[0] !== ''));
-  }
-
-  /** CSV 行（按 id,date,category,amount,note,created_at 顺序）转 expense 对象 */
-  function csvRowToExpense(cols) {
-    if (!cols || cols.length < 4) return null;
-    const amount = parseFloat(cols[3]);
-    if (isNaN(amount)) return null;
-    return {
-      id: cols[0] || generateId(),
-      date: cols[1] || '',
-      category: cols[2] || '',
-      amount,
-      note: cols[4] || '',
-      created_at: cols[5] || new Date().toISOString(),
-    };
-  }
-
-  /** Excel 行（中文表头顺序：ID,日期,类别,金额,备注,创建时间）转 expense 对象 */
-  function excelRowToExpense(row) {
-    if (!row || row.length < 4) return null;
-    // row 是 XLSX.utils.sheet_to_json(header:1) 返回的数组
-    // 中文表头映射：索引 0=ID, 1=日期, 2=类别, 3=金额, 4=备注, 5=创建时间
-    const amount = Number(row[3]);
-    if (isNaN(amount)) return null;
-    return {
-      id: row[0] || generateId(),
-      date: String(row[1] || ''),
-      category: String(row[2] || ''),
-      amount,
-      note: String(row[4] || ''),
-      created_at: String(row[5] || new Date().toISOString()),
-    };
   }
 
   global.dataStore = dataStore;

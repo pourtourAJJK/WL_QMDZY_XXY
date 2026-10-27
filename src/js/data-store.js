@@ -101,33 +101,6 @@
       return '\ufeff' + [headerLine, ...rows].join('\r\n');
     },
 
-    /** 导出为 Excel（SheetJS）。返回 ArrayBuffer，调用方负责下载。 */
-    exportExcel() {
-      if (!global.XLSX) {
-        throw new Error('Excel 导出需要 SheetJS 库加载，请刷新页面或检查网络');
-      }
-      const expenses = this.getAll();
-      const aoa = [
-        ['ID', '日期', '类别', '金额', '备注', '创建时间'],
-        ...expenses.map((e) => [
-          e.id,
-          e.date,
-          e.category,
-          Number(e.amount),
-          e.note || '',
-          (e.created_at || '').replace('T', ' ').slice(0, 19),
-        ]),
-      ];
-      const ws = global.XLSX.utils.aoa_to_sheet(aoa);
-      ws['!cols'] = [
-        { wch: 38 }, { wch: 12 }, { wch: 10 },
-        { wch: 10 }, { wch: 20 }, { wch: 20 },
-      ];
-      const wb = global.XLSX.utils.book_new();
-      global.XLSX.utils.book_append_sheet(wb, ws, '开销记录');
-      return global.XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-    },
-
     /** schema_version 常量 */
     get SCHEMA_VERSION() {
       return SCHEMA_VERSION;

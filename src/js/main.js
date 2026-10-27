@@ -147,9 +147,10 @@
     }
   }
 
-  // ============ 导出（基于后端快照在本地生成文件） ============
+  // ============ 导出 ============
+  // JSON / CSV 由后端快照在本地拼装；Excel 由后端 openpyxl 生成（不依赖前端 SheetJS）
 
-  function doExport(format) {
+  async function doExport(format) {
     const now = new Date();
     const dateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 
@@ -167,20 +168,15 @@
           `expense-backup-${dateStr}.csv`
         );
       } else if (format === 'excel') {
-        if (!global.XLSX) {
-          alert('Excel 导出需要 SheetJS 库，但当前未加载。请检查网络后刷新页面，或改用 JSON/CSV 格式。');
-          return;
-        }
-        const arrayBuffer = global.dataStore.exportExcel();
-        triggerDownload(
-          new Blob([arrayBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
-          `expense-backup-${dateStr}.xlsx`
-        );
+        // 服务端生成 xlsx：带表头样式、列宽、冻结首行与金额格式
+        const result = await global.api.download('/api/expenses/export/');
+        triggerDownload(result.blob, result.filename || `expense-backup-${dateStr}.xlsx`);
       } else {
         alert('未知导出格式：' + format);
       }
     } catch (e) {
       alert('导出失败：' + e.message);
+      if (e.status === 401 && global.auth) global.auth.logout();
     }
   }
 

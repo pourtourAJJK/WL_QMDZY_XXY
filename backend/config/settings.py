@@ -138,6 +138,7 @@ REST_FRAMEWORK = {
         "login": "10/min",       # 单 IP 每分钟最多 10 次登录尝试
         "register": "5/hour",    # 单 IP 每小时最多注册 5 个账号
         "import": "10/hour",     # 单用户每小时最多导入 10 次
+        "export": "30/hour",     # 单用户每小时最多导出 30 次
     },
     "EXCEPTION_HANDLER": "config.exceptions.api_exception_handler",
     "DEFAULT_RENDERER_CLASSES": ("rest_framework.renderers.JSONRenderer",),

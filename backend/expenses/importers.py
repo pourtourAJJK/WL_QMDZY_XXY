@@ -152,7 +152,82 @@ def _parse_xlsx(raw: bytes) -> list[dict]:
     rows = [r for r in rows if any(str(c).strip() for c in r if c is not None)]
     if not rows:
         raise ImportValidationError("Excel 工作表为空")
+
+    # 微信支付账单：前若干行是账单元信息，真正表头含"交易时间""金额(元)"
+    if _is_wechat_bill(rows):
+        return _parse_wechat_bill(rows)
     return _records_from_rows(rows, "Excel")
+
+
+# ============ 微信支付账单 ============
+
+_WECHAT_HEADER = ("交易时间", "金额(元)")
+
+
+def _is_wechat_bill(rows: list[list]) -> bool:
+    for row in rows[:30]:  # 表头通常在前 30 行内
+        cells = {str(c).strip() for c in row if c is not None}
+        if all(marker in cells for marker in _WECHAT_HEADER):
+            return True
+    return False
+
+
+def _parse_wechat_bill(rows: list[list]) -> list[dict]:
+    """解析微信支付账单明细，只导入"支出"行，跳过已全额退款的交易。"""
+    header_idx = None
+    header = None
+    for i, row in enumerate(rows):
+        cells = [str(c).strip() for c in row if c is not None]
+        if all(m in cells for m in _WECHAT_HEADER):
+            header_idx = i
+            header = cells
+            break
+    if header_idx is None:
+        raise ImportValidationError("微信账单未找到表头行")
+
+    col = {name: idx for idx, name in enumerate(header)}
+    date_i = col["交易时间"]
+    amount_i = col["金额(元)"]
+    direction_i = col.get("收/支")
+    type_i = col.get("交易类型")
+    merchant_i = col.get("交易对方")
+    goods_i = col.get("商品")
+    status_i = col.get("当前状态")
+    remark_i = col.get("备注")
+
+    records = []
+    offset = 0
+    for row in rows[header_idx + 1:]:
+        direction = str(row[direction_i]).strip() if direction_i is not None and direction_i < len(row) else "支出"
+        # 只统计支出；收入/中性交易跳过
+        if direction != "支出":
+            continue
+        # 跳过已全额退款的交易，避免虚增支出
+        status = str(row[status_i]).strip() if status_i is not None and status_i < len(row) else ""
+        if "退款" in status:
+            continue
+
+        offset += 1
+        amount = row[amount_i] if amount_i < len(row) else None
+        date_val = row[date_i] if date_i < len(row) else None
+        category = (
+            str(row[type_i]).strip()
+            if type_i is not None and type_i < len(row) and row[type_i] is not None
+            else "其他"
+        )
+        # 备注优先取商品描述，其次交易对方，最后备注列
+        note_parts = []
+        for src in (goods_i, merchant_i, remark_i):
+            if src is not None and src < len(row) and row[src] is not None:
+                val = str(row[src]).strip()
+                if val and val != "/":
+                    note_parts.append(val)
+        note = " · ".join(note_parts)[:100]
+
+        records.append(_normalize(amount, date_val, category, note, offset, "微信账单"))
+    if not records:
+        raise ImportValidationError("微信账单中没有可导入的支出记录")
+    return records
 
 
 def _parse_html(raw: bytes) -> list[dict]:

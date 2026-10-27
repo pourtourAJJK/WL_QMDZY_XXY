@@ -1,9 +1,10 @@
-"""服务端导入解析（JSON / CSV / XLSX）。
+"""服务端导入解析（JSON / CSV / XLSX / HTML 表格）。
 
 安全要点：
 - 大小上限 5MB、行数上限 5000，超限直接拒绝；
 - 逐行校验金额（>0）、日期、类别、备注长度，任一行不合法则整份文件拒绝；
-- 只接受 .xlsx（旧版 .xls 需另存），避免引入不安全的旧格式解析器；
+- 兼容记账软件/银行导出的"伪 Excel"（HTML 表格改名 .xls/.xlsx），用标准库解析第一张 <table>；
+- 真正的旧版二进制 .xls 仍需另存为 .xlsx，避免引入不安全的旧格式解析器；
 - 解析与写入在事务中完成，失败不会破坏用户既有数据。
 """
 import csv
@@ -11,6 +12,7 @@ import io
 import json
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
+from html.parser import HTMLParser
 
 import openpyxl
 
@@ -42,14 +44,18 @@ def parse_upload(filename: str, raw: bytes) -> list[dict]:
         raise ImportValidationError("文件超过 5MB 上限")
 
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-    if ext == "json":
+
+    # 内容嗅探优先于扩展名：很多"xlsx/xls"其实是 HTML 网页（记账软件/银行导出）
+    if _looks_like_html(raw):
+        records = _parse_html(raw)
+    elif _looks_like_binary_xls(raw):
+        raise ImportValidationError("暂不支持旧版二进制 .xls，请用 Excel/WPS 打开后另存为 .xlsx 再导入")
+    elif ext == "json":
         records = _parse_json(raw)
     elif ext in ("csv", "txt"):
         records = _parse_csv(raw)
-    elif ext == "xlsx":
+    elif ext in ("xlsx", "xls"):
         records = _parse_xlsx(raw)
-    elif ext == "xls":
-        raise ImportValidationError("暂不支持旧版 .xls，请用 Excel 另存为 .xlsx 后重试")
     else:
         raise ImportValidationError("仅支持 .json / .csv / .xlsx 文件")
 
@@ -58,6 +64,23 @@ def parse_upload(filename: str, raw: bytes) -> list[dict]:
     if len(records) > MAX_ROWS:
         raise ImportValidationError(f"单次最多导入 {MAX_ROWS} 条记录")
     return records
+
+
+# ============ 内容嗅探 ============
+
+_OLE2_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+
+
+def _looks_like_html(raw: bytes) -> bool:
+    head = raw[:512].lstrip(b"\xef\xbb\xbf \t\r\n").lower()
+    return head.startswith(b"<") and (
+        head.startswith((b"<!doctype", b"<html", b"<table", b"<head", b"<body", b"<meta"))
+        or b"<table" in head
+    )
+
+
+def _looks_like_binary_xls(raw: bytes) -> bool:
+    return raw[:8] == _OLE2_MAGIC
 
 
 # ============ 各格式解析 ============
@@ -129,7 +152,36 @@ def _parse_xlsx(raw: bytes) -> list[dict]:
     rows = [r for r in rows if any(str(c).strip() for c in r if c is not None)]
     if not rows:
         raise ImportValidationError("Excel 工作表为空")
+    return _records_from_rows(rows, "Excel")
 
+
+def _parse_html(raw: bytes) -> list[dict]:
+    """解析"HTML 表格伪装成 Excel"的文件（账单导出常见），只取第一张 <table>。"""
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        try:
+            text = raw.decode("gb18030")
+        except UnicodeDecodeError as exc:
+            raise ImportValidationError("网页文件编码无法识别（需 UTF-8 或 GB18030）") from exc
+
+    parser = _FirstTableParser()
+    try:
+        parser.feed(text)
+        parser.close()
+    except Exception as exc:
+        raise ImportValidationError("网页内容解析失败，请用 Excel/WPS 另存为 .xlsx 后重试") from exc
+
+    if not parser.rows:
+        raise ImportValidationError(
+            "文件内容实际是网页而不是 Excel 表格（未找到 <table>），"
+            "请用 Excel/WPS 打开后另存为 .xlsx 再导入"
+        )
+    return _records_from_rows(parser.rows, "Excel")
+
+
+def _records_from_rows(rows: list[list], source: str) -> list[dict]:
+    """表格行（xlsx/HTML 共用）→ 校验后的记录。"""
     index = _build_index(rows[0])
     if index is None:
         index, data_rows = _POSITIONAL_INDEX, rows
@@ -145,10 +197,50 @@ def _parse_xlsx(raw: bytes) -> list[dict]:
                 _cell(row, index, "category"),
                 _cell(row, index, "note"),
                 offset,
-                "Excel",
+                source,
             )
         )
     return records
+
+
+class _FirstTableParser(HTMLParser):
+    """提取第一张 <table> 的全部行（th/td 文本），忽略其余内容。"""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.rows: list[list[str]] = []
+        self._in_table = False
+        self._done = False
+        self._current_row: list[str] | None = None
+        self._cell_parts: list[str] | None = None
+
+    def handle_starttag(self, tag, attrs):
+        if self._done:
+            return
+        if tag == "table":
+            self._in_table = True
+        elif self._in_table and tag == "tr":
+            self._current_row = []
+        elif self._current_row is not None and tag in ("td", "th"):
+            self._cell_parts = []
+
+    def handle_data(self, data):
+        if self._cell_parts is not None:
+            self._cell_parts.append(data)
+
+    def handle_endtag(self, tag):
+        if self._done:
+            return
+        if tag in ("td", "th") and self._cell_parts is not None:
+            self._current_row.append("".join(self._cell_parts).strip())
+            self._cell_parts = None
+        elif tag == "tr" and self._current_row is not None:
+            if any(cell for cell in self._current_row):
+                self.rows.append(self._current_row)
+            self._current_row = None
+        elif tag == "table" and self._in_table:
+            self._in_table = False
+            self._done = True
 
 
 # ============ 通用工具 ============

@@ -10,7 +10,7 @@
 - 前端：Node 24（VM 加载真实模块）+ 浏览器（`http://localhost:8080`）
 - 数据库：SQLite `backend/db.sqlite3`（已 gitignore）
 
-## 1. 后端单元测试 —— 28/28 PASS
+## 1. 后端单元测试 —— 34/34 PASS
 
 执行：`cd backend && python manage.py test`
 
@@ -39,6 +39,9 @@
 | 导出 | `Content-Type` 为 xlsx、`Content-Disposition` 带文件名、PK 魔数、表头与行数正确 | PASS |
 | 导出 | 无数据时仅表头一行 | PASS |
 | 导出 | 导出文件可直接再导入（round-trip） | PASS |
+| 导入 | HTML 表格伪装 .xlsx / .xls（UTF-8 与 GB18030）导入成功 | PASS |
+| 导入 | 无 `<table>` 的网页 → 400 + 中文另存指引；二进制 .xls → 400 | PASS |
+| 导入 | HTML 导入失败时原数据不变 | PASS |
 
 ## 2. XLSX 导出 / 导入回环联调（真实服务）—— 30/30 PASS
 
@@ -53,13 +56,15 @@
 
 结果：`总计 30/30 PASS`
 
-## 3. 接口联调（真实服务）—— 23/23 PASS
+## 3. 接口联调（真实服务）—— 23/23 PASS + HTML 导入 5/5 PASS
 
 执行：后端 `runserver 127.0.0.1:8000` + 前端 `http.server 8080`，Python requests 脚本逐项请求。
 
 覆盖：注册 → 登录 → `/me/`（带/不带/伪造令牌）→ 未认证访问 → 新增 → 列表 → CSV 导入 → 覆盖校验 → 非法金额 400 → 原数据未损 → XLSX 导入 → 内容比对 → 第二用户数据隔离 → 登出 205 → refresh 401 → 5 次错误锁定 → 锁定后正确密码 423 → CORS 预检放行 `http://localhost:8080` → 前端首页/api.js 可访问。
 
 结果：`总计 23/23 PASS`
+
+补充（iteration-15 真实 HTTP）：HTML 表伪装 `.xls` 导入 2 条且回读金额/日期/备注正确；无 `<table>` 网页与二进制 `.xls` 均返回 400 中文指引；原数据不受影响。`总计 5/5 PASS`（脚本中一处断言把金额写成字符串 `"35.50"`，接口实际返回数值 `35.5`，属脚本期望错误而非功能缺陷，已在 iteration-15.md 记录）。
 
 ## 4. 前端模块联调（Node VM + 真实后端）—— 15/15 PASS
 

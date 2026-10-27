@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>个人开销统计仪表盘</title>
-  <link rel="stylesheet" href="css/style.css?v=20261027">
+  <link rel="stylesheet" href="css/style.css?v=20261027b">
 </head>
 <body>
   <!-- ============== 登录/注册视图 ============== -->
@@ -184,20 +184,19 @@
     </section>
   </div>
 
-  <!-- ECharts CDN：jsdelivr（国际） + bootcdn（国内备用） -->
-  <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
-  <script>if (typeof echarts === 'undefined') { document.write('<script src="https://cdn.bootcdn.net/ajax/libs/echarts/5.5.0/echarts.min.js"><\\/script>'); }</script>
+  <!-- ECharts：本地文件，避免 CDN 不可用导致页面脚本加载中断 -->
+  <script src="js/vendor/echarts.min.js?v=20261027b"></script>
 
   <!-- 业务 JS 模块（严格按依赖顺序加载；?v= 防止浏览器沿用旧缓存代码） -->
-  <script src="js/api.js?v=20261027"></script>
-  <script src="js/auth.js?v=20261027"></script>
-  <script src="js/categories.js?v=20261027"></script>
-  <script src="js/data-store.js?v=20261027"></script>
-  <script src="js/charts.js?v=20261027"></script>
-  <script src="js/cards.js?v=20261027"></script>
-  <script src="js/list-view.js?v=20261027"></script>
-  <script src="js/form.js?v=20261027"></script>
-  <script src="js/renderer.js?v=20261027"></script>
-  <script src="js/main.js?v=20261027"></script>
+  <script src="js/api.js?v=20261027b"></script>
+  <script src="js/auth.js?v=20261027b"></script>
+  <script src="js/categories.js?v=20261027b"></script>
+  <script src="js/data-store.js?v=20261027b"></script>
+  <script src="js/charts.js?v=20261027b"></script>
+  <script src="js/cards.js?v=20261027b"></script>
+  <script src="js/list-view.js?v=20261027b"></script>
+  <script src="js/form.js?v=20261027b"></script>
+  <script src="js/renderer.js?v=20261027b"></script>
+  <script src="js/main.js?v=20261027b"></script>
 </body>
 </html>

@@ -129,6 +129,10 @@
 
     /** 是否持有未过期的会话凭据（真实有效性由 restoreSession 向后端确认） */
     isLoggedIn() {
+      if (!global.api) {
+        console.error('[auth] api.js 未加载，global.api 不存在');
+        return false;
+      }
       const tokens = global.api.getTokens();
       return !!(tokens && tokens.access && tokens.refresh);
     },
